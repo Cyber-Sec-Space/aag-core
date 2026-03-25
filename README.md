@@ -1,6 +1,6 @@
 # AI Auth Gateway Core (`@cyber-sec.space/aag-core`)
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 
 **[English](#english)** | **[中文](#chinese)**
 
@@ -59,7 +59,7 @@ const proxy = new ProxyServer(clientManager, configStore, secretStore, logger);
 // The proxy.server is an MCP Server instance ready to be connected to a transport.
 ```
 
-For detailed architectural information, please see [ARCHITECTURE.md](./ARCHITECTURE.md).
+For detailed architectural information, please see [ARCHITECTURE.md](https://github.com/Cyber-Sec-Space/aag-core/blob/main/ARCHITECTURE.md).
 
 ---
 
@@ -116,4 +116,4 @@ const proxy = new ProxyServer(clientManager, configStore, secretStore, logger);
 // proxy.server 是一個 MCP Server 執行個體，隨時準備好連接到傳輸層 (Transport)。
 ```
 
-如需詳細的架構資訊，請參見 [ARCHITECTURE.md](./ARCHITECTURE.md)。
+如需詳細的架構資訊，請參見 [ARCHITECTURE.md](https://github.com/Cyber-Sec-Space/aag-core/blob/main/ARCHITECTURE.md)。
