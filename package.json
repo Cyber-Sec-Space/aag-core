@@ -8,6 +8,10 @@
     "build": "tsc"
   },
   "license": "AGPL-3.0",
+  "files": [
+    "build",
+    "ARCHITECTURE.md"
+  ],
   "type": "module",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
