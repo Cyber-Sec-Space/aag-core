@@ -7,13 +7,14 @@ import { IConfigStore } from "./interfaces/IConfigStore.js";
 import { ISecretStore } from "./interfaces/ISecretStore.js";
 import { IAuditLogger } from "./interfaces/IAuditLogger.js";
 
-export type ClientStatus = "CONNECTED" | "RECONNECTING" | "DISCONNECTED";
+export type ClientStatus = "CONNECTED" | "RECONNECTING" | "DISCONNECTED" | "DISCONNECTED_IDLE";
 
 export interface ManagedClient {
   client: Client | null;
   config: McpServerConfig;
   status: ClientStatus;
   reconnectAttempts: number;
+  lastAccessed: number;
 }
 
 export class ClientManager {
@@ -23,19 +24,31 @@ export class ClientManager {
   private logger: IAuditLogger;
   private pingInterval: ReturnType<typeof setInterval> | null = null;
   private isDestroyed = false;
+  private idleTimeoutMs: number;
 
-  constructor(configStore: IConfigStore, secretStore: ISecretStore, logger: IAuditLogger) {
+  constructor(configStore: IConfigStore, secretStore: ISecretStore, logger: IAuditLogger, idleTimeoutMs: number = 300000) {
     this.configStore = configStore;
     this.secretStore = secretStore;
     this.logger = logger;
+    this.idleTimeoutMs = idleTimeoutMs;
     
     this.startPingDaemon();
   }
 
   private startPingDaemon() {
     this.pingInterval = setInterval(async () => {
+      const now = Date.now();
       for (const [id, managed] of this.clients.entries()) {
         if (managed.status === "CONNECTED" && managed.client) {
+          
+          if (now - managed.lastAccessed > this.idleTimeoutMs) {
+             this.logger.info("ClientManager", `Evicting idle downstream client ${id} to save resources.`);
+             managed.status = "DISCONNECTED_IDLE";
+             managed.client.close().catch(()=>{});
+             managed.client = null;
+             continue;
+          }
+
           try {
             const pingPromise = managed.client.ping();
             const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Ping timeout")), 5000));
@@ -127,27 +140,15 @@ export class ClientManager {
   }
 
   private async addClient(id: string, config: McpServerConfig) {
+    // JIT: We do NOT connect instantly. We stay in DISCONNECTED_IDLE.
     this.clients.set(id, {
         client: null,
         config,
-        status: "RECONNECTING",
-        reconnectAttempts: 0
+        status: "DISCONNECTED_IDLE",
+        reconnectAttempts: 0,
+        lastAccessed: Date.now()
     });
-    
-    try {
-      const client = await this.createTransportAndConnect(id, config);
-      const managed = this.clients.get(id);
-      if (managed && client) {
-         managed.client = client;
-         managed.status = "CONNECTED";
-         this.logger.info("ClientManager", `Successfully connected to downstream: ${id}`);
-      } else if (client) {
-         client.close().catch(()=>{});
-      }
-    } catch (e: any) {
-      this.logger.error("ClientManager", `Failed initial connect downstream: ${id} - ${e.message}`);
-      this.triggerReconnect(id);
-    }
+    this.logger.info("ClientManager", `Registered downstream config for ${id}. (Awaiting JIT connection)`);
   }
 
   private async createTransportAndConnect(id: string, config: McpServerConfig): Promise<Client | null> {
@@ -205,13 +206,67 @@ export class ClientManager {
 
   public getClient(id: string): Client | undefined {
     const managed = this.clients.get(id);
+    if (managed) managed.lastAccessed = Date.now();
     return managed?.status === "CONNECTED" && managed.client ? managed.client : undefined;
+  }
+
+  public async getClientJIT(id: string): Promise<Client | undefined> {
+    const managed = this.clients.get(id);
+    if (!managed) return undefined;
+
+    managed.lastAccessed = Date.now();
+
+    if (managed.status === "CONNECTED" && managed.client) {
+        return managed.client;
+    }
+
+    if (managed.status === "DISCONNECTED" || managed.status === "DISCONNECTED_IDLE") {
+        managed.status = "RECONNECTING";
+        try {
+            const client = await this.createTransportAndConnect(id, managed.config);
+            if (client) {
+                managed.client = client;
+                managed.status = "CONNECTED";
+                managed.reconnectAttempts = 0;
+                this.logger.info("ClientManager", `JIT connection established for: ${id}`);
+                return client;
+            }
+        } catch (e: any) {
+            this.logger.error("ClientManager", `JIT connection failed for ${id}: ${e.message}`);
+            managed.status = "DISCONNECTED"; // Revert so next JIT can try
+            throw e;
+        }
+    }
+
+    // Await ongoing reconnection natively
+    if (managed.status === "RECONNECTING") {
+        for (let i = 0; i < 50; i++) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+            const currentStatus = this.clients.get(id)?.status;
+            if (currentStatus === "CONNECTED" && this.clients.get(id)?.client) return this.clients.get(id)!.client!;
+            if (currentStatus === "DISCONNECTED") break;
+        }
+        throw new Error(`Client ${id} is stuck reconnecting`);
+    }
+
+    return undefined;
   }
 
   public getClientStatus(id: string): ClientStatus | undefined {
     return this.clients.get(id)?.status;
   }
 
+  public async getClientsJIT(): Promise<Map<string, Client>> {
+    const map = new Map<string, Client>();
+    for (const [id, managed] of this.clients.entries()) {
+      try {
+        const client = await this.getClientJIT(id);
+        if (client) map.set(id, client);
+      } catch(e) { /* ignore JIT failures from dead servers */ }
+    }
+    return map;
+  }
+  
   public getClients(): Map<string, Client> {
     const map = new Map<string, Client>();
     for (const [id, managed] of this.clients.entries()) {

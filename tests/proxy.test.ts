@@ -63,6 +63,15 @@ describe("ProxyServer Suite", () => {
         delete process.env.AI_KEY;
     });
 
+    it("should respect disableEnvFallback option directly targeting pure unauthenticated sessions", async () => {
+        const strictProxy = new ProxyServer(clientManager, configStore, new MockSecretStore(), new MockLogger(), { disableEnvFallback: true });
+        const handlers = (strictProxy.server as any)._requestHandlers;
+        const callHandler = handlers.get("tools/call");
+
+        const req = { method: "tools/call", params: { name: "test", arguments: {} } };
+        await expect(callHandler(req, {})).rejects.toThrow("Authentication required: No AI ID context provided for this session.");
+    });
+
     // ----------------------------------------------------
     // Section: Authentication Engine Validation
     // Verifies `validateAuth` dynamically authorizes the AI agent safely.
@@ -105,7 +114,7 @@ describe("ProxyServer Suite", () => {
             const listHandler = handlers.get("tools/list");
             if (!listHandler) throw new Error("ListTools handler not found");
 
-            proxy.authenticatedAiId = "test-ai"; // Mock pre-authenticated state avoids env checks depending on timing
+            proxy.authenticatedAiId = "test-ai"; // Optional but redundant mock
             
             const req = { method: "tools/list", params: {} };
             const result = await listHandler(req, {});
@@ -141,8 +150,8 @@ describe("ProxyServer Suite", () => {
             await expect(callHandler(req, {})).rejects.toThrow("Permission denied: AI ID 'test-ai' is not allowed to use tool 'github___search_users'.");
         });
 
-        // Simulates the Multiplex Keep-Alive optimization failing fast upon disconnected downstream servers.
-        it("should fail-fast if target downstream server is RECONNECTING", async () => {
+        // Simulates the JIT connection pool failing due to being stuck reconnecting indefinitely
+        it("should fail if target downstream server is stuck RECONNECTING", async () => {
             const handlers = (proxy.server as any)._requestHandlers;
             const callHandler = handlers.get("tools/call");
             
@@ -150,10 +159,10 @@ describe("ProxyServer Suite", () => {
             managed.status = "RECONNECTING";
 
             const req = { method: "tools/call", params: { name: "github___search_repositories", arguments: {} } };
-            await expect(callHandler(req, {})).rejects.toThrow("Downstream server 'github' is currently unavailable and reconnecting.");
+            await expect(callHandler(req, {})).rejects.toThrow("Client github is stuck reconnecting");
             
             managed.status = "CONNECTED"; // Restore
-        });
+        }, 10000);
 
         // Simulates edge case config wipe vulnerabilities
         it("should throw if the downstream targetServerId config is entirely missing", async () => {

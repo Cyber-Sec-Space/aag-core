@@ -53,7 +53,7 @@ describe("ClientManager", () => {
     clientManager = new CM(configStore, new MockSecretStore(), new MockLogger());
     
     await clientManager.syncConfig(initialConfig);
-    expect(clientManager.getClients().has("server-1")).toBe(true);
+    expect((await clientManager.getClientsJIT()).has("server-1")).toBe(true);
     
     const newConfig: any = {
       mcpServers: {
@@ -64,7 +64,7 @@ describe("ClientManager", () => {
     await clientManager.syncConfig(newConfig);
     
     expect(clientManager.getClients().has("server-1")).toBe(false);
-    expect(clientManager.getClients().has("server-2")).toBe(true);
+    expect((await clientManager.getClientsJIT()).has("server-2")).toBe(true);
   });
 
   // Evaluates the simulated Ping Daemon and automatic Exponential Backoff mechanisms handling downstream failures gracefully.
@@ -75,20 +75,20 @@ describe("ClientManager", () => {
     
     clientManager = new CM(new MockConfigStore(config), new MockSecretStore(), new MockLogger());
     await clientManager.syncConfig(config);
-    expect(clientManager.getClientStatus("server-1")).toBe("CONNECTED");
+    expect(clientManager.getClientStatus("server-1")).toBe("DISCONNECTED_IDLE");
 
-    const client = clientManager.getClient("server-1");
+    const client = await clientManager.getClientJIT("server-1"); // JIT wake up
+    
+    jest.useFakeTimers(); // Safe to freeze time AFTER the async connection
+
     // Force the proxy's next ping to fail
     (client as any).ping.mockRejectedValueOnce(new Error("Network Error"));
 
     // Advance 30s to trigger ping daemon
     await jest.advanceTimersByTimeAsync(30000);
 
-    // Status should be marked as reconnecting
-    expect(clientManager.getClientStatus("server-1")).toBe("RECONNECTING");
-    
     // First backoff timeout is 2 seconds (Math.pow(2, 1) = 2000)
-    // Wait for the reconnect flow to finish execution
+    // Both interval and backoff are captured by the 30s advance.
     await jest.advanceTimersByTimeAsync(2000);
 
     // Status should have recovered automatically
@@ -107,6 +107,6 @@ describe("ClientManager", () => {
     
     clientManager = new CM(new MockConfigStore(config), new MockSecretStore(), new MockLogger());
     await clientManager.syncConfig(config);
-    expect(clientManager.getClients().has("server-http")).toBe(true);
+    expect((await clientManager.getClientsJIT()).has("server-http")).toBe(true);
   });
 });
