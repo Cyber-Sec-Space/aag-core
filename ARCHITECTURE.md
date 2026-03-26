@@ -21,11 +21,13 @@ The core solely concerns itself with MCP routing, connection management, and aut
 graph TD
     Client[AI Client] -->|MCP Request| Proxy(ProxyServer)
     
+    Proxy -.->|Interceptors| MW(ProxyMiddlewares)
     Proxy -->|Reads Config| Config(IConfigStore)
     Proxy -->|Logs Activities| Logger(IAuditLogger)
     Proxy -->|Validates/Routes| CM(ClientManager)
     
     CM -->|Resolves Credentials| Secrets(ISecretStore)
+    CM -.->|Ping & Auto-Reconnect| Downstream1
     CM -->|Manages| Downstream1[MCP Server 1 - Stdio]
     CM -->|Manages| Downstream2[MCP Server 2 - SSE]
     CM -->|Manages| Downstream3[MCP Server 3 - HTTP]
@@ -68,11 +70,13 @@ The `ProxyServer` leverages the official `@modelcontextprotocol/sdk` to expose a
 graph TD
     Client[AI 客戶端] -->|MCP 請求| Proxy(ProxyServer)
     
+    Proxy -.->|攔截與修改| MW(ProxyMiddlewares)
     Proxy -->|讀取設定| Config(IConfigStore)
     Proxy -->|記錄活動| Logger(IAuditLogger)
     Proxy -->|驗證與路由| CM(ClientManager)
     
     CM -->|解析機密憑證| Secrets(ISecretStore)
+    CM -.->|Ping 與 自動重連| Downstream1
     CM -->|管理| Downstream1[MCP 伺服器 1 - Stdio]
     CM -->|管理| Downstream2[MCP 伺服器 2 - SSE]
     CM -->|管理| Downstream3[MCP 伺服器 3 - HTTP]
