@@ -4,3 +4,6 @@ export * from "./interfaces/IAuditLogger.js";
 export * from "./config/types.js";
 export * from "./clientManager.js";
 export * from "./proxy.js";
+export * from "./middleware/types.js";
+export * from "./middleware/dataMasking.js";
+export * from "./middleware/rateLimit.js";

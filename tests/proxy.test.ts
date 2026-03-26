@@ -2,6 +2,7 @@ import { jest } from "@jest/globals";
 import { ProxyServer } from "../src/proxy.js";
 import { ClientManager } from "../src/clientManager.js";
 import { MockConfigStore, MockSecretStore, MockLogger } from "./mocks.js";
+import { RateLimitMiddleware } from "../src/middleware/rateLimit.js";
 
 describe("ProxyServer Suite", () => {
     let proxy: any;
@@ -188,6 +189,31 @@ describe("ProxyServer Suite", () => {
 
             // Verify onResponse mutation masked the PII securely
             expect(result.content[0].text).toBe("Admin: ***");
+        });
+    });
+
+    // ----------------------------------------------------
+    // Section: Rate Limiting
+    // Verifies the Token Bucket rate limiter correctly blocks excessive requests.
+    // ----------------------------------------------------
+    describe("Rate Limiting", () => {
+        it("should allow requests under the limit and block those exceeding it", async () => {
+            const handlers = (proxy.server as any)._requestHandlers;
+            const callHandler = handlers.get("tools/call");
+
+            // Limit: 2 requests per minute (60000ms)
+            const limiter = new RateLimitMiddleware(2, 60000);
+            proxy.use(limiter);
+
+            const req = { method: "tools/call", params: { name: "github___search_repositories", arguments: { query: "1" } } };
+            
+            // 1st request - OK
+            await callHandler(req, {});
+            // 2nd request - OK
+            await callHandler(req, {});
+            
+            // 3rd request - Fail
+            await expect(callHandler(req, {})).rejects.toThrow("Rate limit exceeded for AI ID 'test-ai'. Please try again later.");
         });
     });
 });

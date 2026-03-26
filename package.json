@@ -1,6 +1,6 @@
 {
   "name": "@cyber-sec.space/aag-core",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Core protocols and interfaces for AI Auth Gateway",
   "main": "build/index.js",
   "types": "build/index.d.ts",

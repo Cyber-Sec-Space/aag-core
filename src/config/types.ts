@@ -48,6 +48,10 @@ export const AuthKeySchema = z.object({
     deniedServers: z.array(z.string()).optional(),
     allowedTools: z.array(z.string()).optional(),
     deniedTools: z.array(z.string()).optional(),
+  }).optional(),
+  rateLimit: z.object({
+    rpm: z.number().optional(), // Requests Per Minute
+    rph: z.number().optional()  // Requests Per Hour
   }).optional()
 });
 
