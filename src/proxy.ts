@@ -8,6 +8,7 @@ import { ClientManager } from "./clientManager.js";
 import { IConfigStore } from "./interfaces/IConfigStore.js";
 import { ISecretStore } from "./interfaces/ISecretStore.js";
 import { IAuditLogger } from "./interfaces/IAuditLogger.js";
+import { ProxyMiddleware, ProxyContext } from "./middleware/types.js";
 
 export class ProxyServer {
   public server: Server;
@@ -16,6 +17,7 @@ export class ProxyServer {
   private secretStore: ISecretStore;
   private logger: IAuditLogger;
   private authenticatedAiId: string | null = null;
+  private middlewares: ProxyMiddleware[] = [];
 
   constructor(clientManager: ClientManager, configStore: IConfigStore, secretStore: ISecretStore, logger: IAuditLogger) {
     this.clientManager = clientManager;
@@ -29,6 +31,11 @@ export class ProxyServer {
     );
 
     this.setupRequestHandlers();
+  }
+
+  public use(middleware: ProxyMiddleware) {
+      this.middlewares.push(middleware);
+      this.logger.info("Proxy", "Registered custom ProxyMiddleware interceptor.");
   }
 
   private validateAuth(request: any, extra?: any) {
@@ -140,8 +147,9 @@ export class ProxyServer {
       
       let targetServerId: string | null = null;
       let actualToolName: string | null = null;
+      const servers = Object.keys(this.configStore.getConfig()?.mcpServers || {});
 
-      for (const serverId of this.clientManager.getClients().keys()) {
+      for (const serverId of servers) {
         const prefix = `${serverId}___`;
         if (requestedName.startsWith(prefix)) {
           targetServerId = serverId;
@@ -160,6 +168,12 @@ export class ProxyServer {
         throw new Error(`Permission denied: AI ID '${this.authenticatedAiId}' is not allowed to use tool '${requestedName}'.`);
       }
 
+      const clientStatus = this.clientManager.getClientStatus(targetServerId);
+      if (clientStatus === "RECONNECTING") {
+         this.logger.warn("Proxy", `CallTool blocked: downstream ${targetServerId} is reconnecting`);
+         throw new Error(`Downstream server '${targetServerId}' is currently unavailable and reconnecting.`);
+      }
+
       const client = this.clientManager.getClient(targetServerId);
       if (!client) {
         this.logger.error("Proxy", `Downstream client ${targetServerId} is disconnected`);
@@ -172,6 +186,13 @@ export class ProxyServer {
       }
 
       let args = { ...(request.params.arguments || {}) } as any;
+      const proxyContext: ProxyContext = { serverId: targetServerId, toolName: actualToolName, aiId: this.authenticatedAiId! };
+
+      for (const mw of this.middlewares) {
+        if (mw.onRequest) {
+            args = (await mw.onRequest(proxyContext, args)) ?? args;
+        }
+      }
 
       if (config.authInjection?.type === "payload" && config.authInjection.key) {
         args[config.authInjection.key] = await this.secretStore.resolveSecret(config.authInjection.value || "");
@@ -179,10 +200,17 @@ export class ProxyServer {
 
       try {
         this.logger.debug("Proxy", `Forwarding CallTool (${actualToolName}) to downstream ${targetServerId}`);
-        const result = await client.callTool({
+        let result = await client.callTool({
           name: actualToolName,
           arguments: args
         });
+
+        for (const mw of this.middlewares) {
+            if (mw.onResponse) {
+                result = (await mw.onResponse(proxyContext, result)) ?? result;
+            }
+        }
+
         this.logger.info("Activity", `AI ID '${this.authenticatedAiId}' call to '${requestedName}': Success`);
         return result;
       } catch (e: any) {

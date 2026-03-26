@@ -20,6 +20,8 @@ It is designed to be highly modular. By defining strict interfaces (`ISecretStor
 - **Authentication & Authorization**: Validates AI client credentials (`AI_ID`, `AI_KEY`) and enforces fine-grained tool and server permissions with wildcard (`*`) support for allow/deny lists.
 - **Dependency Injection**: Provide your own config managers, secret resolvers (e.g., OS Keychain), and loggers.
 - **Auth Injection**: Safely injects credentials into downstream servers via environment variables, HTTP headers, or request payloads.
+- **High Availability & Keep-Alive**: Automatically tracks downstream health via periodic pings and reconnects with exponential backoff.
+- **Middleware Interceptors**: Programmable pipeline to mutate MCP requests/responses, with a built-in `DataMaskingMiddleware` for PII redaction.
 
 ### Installation
 
@@ -77,6 +79,8 @@ For detailed architectural information, please see [ARCHITECTURE.md](https://git
 - **身分驗證與授權**: 驗證 AI 客戶端憑證（`AI_ID`、`AI_KEY`），並執行細粒度的工具與伺服器權限控管（允許/拒絕清單，支援萬用字元 `*`）。
 - **依賴注入 (Dependency Injection)**: 允許您提供自訂的設定管理器、機密解析器（如作業系統 Keychain）與日誌記錄器。
 - **憑證注入 (Auth Injection)**: 安全地將憑證透過環境變數、HTTP Headers 或請求 Payload 注入到下游伺服器。
+- **高可用性與 Keep-Alive**: 自動追蹤下游健康度並定期 Ping，支援斷線指數退避 (Exponential Backoff) 自動重連。
+- **中介軟體攔截器 (Middlewares)**: 可程式化管線，能在傳輸前後攔截或修改 MCP 請求與回應，並內建 `DataMaskingMiddleware` 用於遮蔽機密個資。
 
 ### 安裝方式
 
