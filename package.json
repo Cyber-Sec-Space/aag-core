@@ -1,7 +1,17 @@
 {
   "name": "@cyber-sec.space/aag-core",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Core protocols and interfaces for AI Auth Gateway",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "ai",
+    "proxy",
+    "gateway",
+    "rbac",
+    "security",
+    "llm"
+  ],
   "main": "build/index.js",
   "types": "build/index.d.ts",
   "scripts": {

@@ -36,6 +36,7 @@ graph TD
     
     Proxy -->|Reads Config| Config(IConfigStore)
     Proxy -->|Logs Activities| Logger(IAuditLogger)
+    Config -.->|Dynamic Limits| RL
     
     CM -->|Resolves Credentials| Secrets(ISecretStore)
     CM -.->|Ping & Auto-Reconnect| Downstream1
@@ -96,6 +97,7 @@ graph TD
 
     Proxy -->|讀取設定| Config(IConfigStore)
     Proxy -->|記錄活動| Logger(IAuditLogger)
+    Config -.->|動態限流參數| RL
     
     CM -->|解析機密憑證| Secrets(ISecretStore)
     CM -.->|Ping 與 自動重連| Downstream1
