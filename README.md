@@ -17,7 +17,7 @@ It is designed to be highly modular. By defining strict interfaces (`ISecretStor
 
 - **MCP Proxying**: Intercepts and routes MCP requests (`ListTools`, `CallTool`) seamlessly.
 - **Multi-Transport Support**: Connects to downstream MCP servers via `stdio`, `sse`, or `http`.
-- **Authentication & Authorization**: Validates AI client credentials (`AI_ID`, `AI_KEY`) and enforces fine-grained tool and server permissions (allow/deny lists).
+- **Authentication & Authorization**: Validates AI client credentials (`AI_ID`, `AI_KEY`) and enforces fine-grained tool and server permissions with wildcard (`*`) support for allow/deny lists.
 - **Dependency Injection**: Provide your own config managers, secret resolvers (e.g., OS Keychain), and loggers.
 - **Auth Injection**: Safely injects credentials into downstream servers via environment variables, HTTP headers, or request payloads.
 
@@ -74,7 +74,7 @@ For detailed architectural information, please see [ARCHITECTURE.md](https://git
 
 - **MCP 代理**: 無縫攔截和路由 MCP 請求（如 `ListTools`、`CallTool`）。
 - **多傳輸協定支援**: 可透過 `stdio`、`sse` 或 `http` 連接到下游的 MCP 伺服器。
-- **身分驗證與授權**: 驗證 AI 客戶端憑證（`AI_ID`、`AI_KEY`），並執行細粒度的工具與伺服器權限控管（允許/拒絕清單）。
+- **身分驗證與授權**: 驗證 AI 客戶端憑證（`AI_ID`、`AI_KEY`），並執行細粒度的工具與伺服器權限控管（允許/拒絕清單，支援萬用字元 `*`）。
 - **依賴注入 (Dependency Injection)**: 允許您提供自訂的設定管理器、機密解析器（如作業系統 Keychain）與日誌記錄器。
 - **憑證注入 (Auth Injection)**: 安全地將憑證透過環境變數、HTTP Headers 或請求 Payload 注入到下游伺服器。
 

@@ -71,6 +71,13 @@ export class ProxyServer {
     return aiid;
   }
 
+  private matchPattern(value: string, pattern: string): boolean {
+    if (pattern === "*") return true;
+    if (!pattern.includes("*")) return value === pattern;
+    const regexPattern = "^" + pattern.split("*").map(s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$";
+    return new RegExp(regexPattern).test(value);
+  }
+
   private isAllowed(serverId: string, toolName: string): boolean {
     if (!this.authenticatedAiId) return false;
     
@@ -83,8 +90,10 @@ export class ProxyServer {
     const { allowedServers, deniedServers, allowedTools, deniedTools } = auth.permissions;
     const fullToolName = `${serverId}___${toolName}`;
 
-    if (deniedServers?.includes(serverId)) return false;
-    if (deniedTools?.includes(fullToolName)) return false;
+    const checkMatch = (list: string[], val: string) => list.some(pattern => this.matchPattern(val, pattern));
+
+    if (deniedServers && checkMatch(deniedServers, serverId)) return false;
+    if (deniedTools && checkMatch(deniedTools, fullToolName)) return false;
 
     const hasServerWhitelist = allowedServers && allowedServers.length > 0;
     const hasToolWhitelist = allowedTools && allowedTools.length > 0;
@@ -93,8 +102,8 @@ export class ProxyServer {
       return true;
     }
 
-    const serverIsAllowed = !hasServerWhitelist || allowedServers!.includes(serverId);
-    const toolIsAllowed = !hasToolWhitelist || allowedTools!.includes(fullToolName);
+    const serverIsAllowed = !hasServerWhitelist || checkMatch(allowedServers!, serverId);
+    const toolIsAllowed = !hasToolWhitelist || checkMatch(allowedTools!, fullToolName);
 
     return serverIsAllowed && toolIsAllowed;
   }
