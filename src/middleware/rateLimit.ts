@@ -1,4 +1,5 @@
 import { ProxyMiddleware, ProxyContext } from "./types.js";
+import { IConfigStore } from "../interfaces/IConfigStore.js";
 
 interface TokenBucket {
   tokens: number;
@@ -13,14 +14,14 @@ export class RateLimitMiddleware implements ProxyMiddleware {
   private buckets: Map<string, TokenBucket> = new Map();
   private maxTokens: number;
   private refillRate: number; // tokens per millisecond
-  private configStore?: any; // IConfigStore
+  private configStore?: IConfigStore;
 
   /**
    * @param maxRequests Maximum number of requests allowed in the window (default fallback).
    * @param windowMs The time window in milliseconds (default fallback).
    * @param configStore Optional config store to look up per-AI limits.
    */
-  constructor(maxRequests: number, windowMs: number, configStore?: any) {
+  constructor(maxRequests: number, windowMs: number, configStore?: IConfigStore) {
     this.maxTokens = maxRequests;
     this.refillRate = maxRequests / windowMs;
     this.configStore = configStore;
@@ -34,8 +35,8 @@ export class RateLimitMiddleware implements ProxyMiddleware {
       
       // Try to resolve per-AI limit from config if available
       if (this.configStore) {
-        const config = this.configStore.load();
-        const aiConfig = config.aiKeys?.[aiId];
+        const config = this.configStore.getConfig();
+        const aiConfig = config?.aiKeys?.[aiId];
         if (aiConfig?.rateLimit?.rpm) {
           limit = aiConfig.rateLimit.rpm;
           window = 60000;
@@ -60,8 +61,8 @@ export class RateLimitMiddleware implements ProxyMiddleware {
 
     // Recalculate rate if config exists (for dynamic updates)
     if (this.configStore) {
-        const config = this.configStore.load();
-        const aiConfig = config.aiKeys?.[aiId];
+        const config = this.configStore.getConfig();
+        const aiConfig = config?.aiKeys?.[aiId];
         if (aiConfig?.rateLimit?.rpm) {
             currentMax = aiConfig.rateLimit.rpm;
             currentRate = aiConfig.rateLimit.rpm / 60000;
