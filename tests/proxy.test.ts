@@ -154,6 +154,30 @@ describe("ProxyServer Suite", () => {
             
             managed.status = "CONNECTED"; // Restore
         });
+
+        // Simulates edge case config wipe vulnerabilities
+        it("should throw if the downstream targetServerId config is entirely missing", async () => {
+            const handlers = (proxy.server as any)._requestHandlers;
+            const callHandler = handlers.get("tools/call");
+            
+            proxy.authenticatedAiId = "test-ai"; // Mock pre-authenticated state
+            delete configStore.getConfig().mcpServers["github"]; // Delete from memory config!
+
+            const req = { method: "tools/call", params: { name: "github___search_repositories", arguments: {} } };
+            await expect(callHandler(req, {})).rejects.toThrow("fully qualified server not found");
+        });
+
+        // Simulates internal downstream crash bubbles
+        it("should catch and log downstream client.callTool runtime execution errors", async () => {
+            const handlers = (proxy.server as any)._requestHandlers;
+            const callHandler = handlers.get("tools/call");
+            
+            proxy.authenticatedAiId = "test-ai"; // Mock pre-authenticated state
+            mockGithubClient.callTool.mockRejectedValue(new Error("Downstream execution crash"));
+
+            const req = { method: "tools/call", params: { name: "github___search_repositories", arguments: {} } };
+            await expect(callHandler(req, {})).rejects.toThrow("Downstream execution crash");
+        });
     });
 
     // ----------------------------------------------------

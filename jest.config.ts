@@ -21,6 +21,16 @@ const jestConfig: JestConfigWithTsJest = {
       },
     ],
   },
+  collectCoverage: true,
+  coverageDirectory: "coverage",
+  coverageReporters: ["text", "json-summary", "lcov", "clover"],
+  collectCoverageFrom: [
+    "src/**/*.ts",
+    "!src/index.ts",
+    "!src/interfaces/**",
+    "!src/config/types.ts",
+    "!src/middleware/types.ts"
+  ]
 }
 
 export default jestConfig
