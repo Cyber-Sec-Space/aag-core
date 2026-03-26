@@ -19,9 +19,9 @@ The core solely concerns itself with MCP routing, connection management, and aut
 
 ```mermaid
 graph TD
-    Client[AI Client] -->|MCP Request| Proxy(ProxyServer)
+    Client[AI Client] -->|MCP Request| Proxy(ProxySession)
     
-    subgraph ProxyInternal [ProxyServer Core]
+    subgraph ProxyInternal [ProxySession Core / Tenant-Bound]
         Auth[validateAuth]
         RBAC[isAllowed Check]
         RL[Rate Limiting]
@@ -34,12 +34,15 @@ graph TD
     RL --> MW
     MW --> CM(ClientManager)
     
-    Proxy -->|Reads Config| Config(IConfigStore)
+    Proxy -->|Reads Tenant Config| Config(IConfigStore)
     Proxy -->|Logs Activities| Logger(IAuditLogger)
+    
     Config -.->|Dynamic Limits| RL
+    State(IStateStore) -.->|Distributed State| RL
     
     CM -->|Resolves Credentials| Secrets(ISecretStore)
-    CM -.->|Ping & Auto-Reconnect| Downstream1
+    CM -.->|Scale-to-Zero LRU Eviction| Downstream1
+    CM -.->|JIT Wake-Up| Downstream1
     CM -->|Manages| Downstream1[MCP Server 1 - Stdio]
     CM -->|Manages| Downstream2[MCP Server 2 - SSE]
     CM -->|Manages| Downstream3[MCP Server 3 - HTTP]
@@ -50,18 +53,20 @@ To integrate `aag-core`, the host application must provide implementations for:
 - **`IConfigStore`**: Manages the proxy configuration (AI keys, tool permissions, registered MCP servers). It supports event listeners to reload configurations on the fly.
 - **`ISecretStore`**: Securely resolves secrets from URIs. For example, a CLI wrapper might resolve `keytar://my-secret` using OS-level secure enclaves.
 - **`IAuditLogger`**: Centralized logging interface.
+- **`IStateStore`**: Distributed atomic map for memory clusters, required by clustered native components like `RateLimitMiddleware` for syncing across V2 SaaS nodes.
 
 #### 2. `ClientManager`
-The `ClientManager` is responsible for observing the configuration and maintaining active network or stdio connections to downstream MCP servers. 
+The scale-to-zero `ClientManager` is responsible for observing the configuration and lazily managing downstream MCP connections.
 - Automatically syncs client lifecycles when configurations change.
-- Injects resolved secrets into downstream transports dynamically (via environment variables, HTTP headers, or streaming endpoints).
-- Maintains an internal Ping Daemon to ensure downstream transports are responsive, initiating exponential backoff reconnection procedures immediately upon timeouts.
+- Native **JIT (Just-In-Time) connectability** spawns MCP downstreams only when actively invoked, saving immense memory footprints locally and remotely.
+- Idle active TCP/stdio connections eventually fall to `DISCONNECTED_IDLE` leveraging background **LRU ping sweeping** after long durations of inactivity.
 
-#### 3. `ProxyServer`
-The `ProxyServer` leverages the official `@modelcontextprotocol/sdk` to expose an upstream server interface. It intercepts major MCP routines:
-- **`ListTools`**: Gathers tools from all connected downstream servers, applies namespace prefixes to prevent collisions, filters them against the authenticated AI client's permission rules, and returns the unified list.
-- **`CallTool`**: Parses the prefixed tool name, authenticates the request, ensures the AI client holds the proper whitelist/blacklist permissions, resolves necessary payload credentials, and proxies the execution to the correct downstream `ClientManager` connection.
-- **`Middlewares`**: Supports an extensible `ProxyMiddleware` pipeline with `onRequest` and `onResponse` hooks, allowing interception and mutation of tool arguments and masking of output contents (e.g., stripping Secrets or API keys before returning to the AI).
+#### 3. `ProxyServer` (as a `ProxySession`)
+The `ProxyServer` leverages the official `@modelcontextprotocol/sdk` to expose an upstream server interface. It intercepts major MCP routines under a stateless identity schema:
+- **Tenant-Bound Configuration**: Injecting `ProxySessionOptions` removes the reliance on `process.env`. `aag-core` easily boots thousands of concurrent, independently authenticated sessions running across isolated users globally.
+- **`ListTools`**: Gathers tools from all connected downstream servers dynamically waking them, applies namespace prefixes to prevent collisions, filters them against the authenticated AI client's permission rules, and returns the unified list.
+- **`CallTool`**: Parses the prefixed tool name, authenticates the request, ensures the AI client holds the proper whitelist/blacklist permissions, resolves necessary payload credentials, and proxies the execution to the newly awakened downstream connection.
+- **`Middlewares`**: Supports an extensible `ProxyMiddleware` pipeline with `onRequest` and `onResponse` hooks, allowing interception and mutation of tool arguments natively.
 
 ---
 
@@ -80,9 +85,9 @@ The `ProxyServer` leverages the official `@modelcontextprotocol/sdk` to expose a
 
 ```mermaid
 graph TD
-    Client[AI 客戶端] -->|MCP 請求| Proxy(ProxyServer)
+    Client[AI 客戶端] -->|MCP 請求| Proxy(ProxySession)
     
-    subgraph ProxyInternal [ProxyServer 核心邏輯]
+    subgraph ProxyInternal [ProxySession 核心邏輯 / 租戶隔離]
         Auth[身分驗證 validateAuth]
         RBAC[權限檢查 isAllowed]
         RL[流量限制 Rate Limiting]
@@ -95,12 +100,15 @@ graph TD
     RL --> MW
     MW --> CM(ClientManager)
 
-    Proxy -->|讀取設定| Config(IConfigStore)
+    Proxy -->|讀取租戶設定| Config(IConfigStore)
     Proxy -->|記錄活動| Logger(IAuditLogger)
+    
     Config -.->|動態限流參數| RL
+    State(IStateStore) -.->|自動儲存分散式狀態| RL
     
     CM -->|解析機密憑證| Secrets(ISecretStore)
-    CM -.->|Ping 與 自動重連| Downstream1
+    CM -.->|Scale-to-Zero LRU 資源回收| Downstream1
+    CM -.->|JIT 動態喚醒| Downstream1
     CM -->|管理| Downstream1[MCP 伺服器 1 - Stdio]
     CM -->|管理| Downstream2[MCP 伺服器 2 - SSE]
     CM -->|管理| Downstream3[MCP 伺服器 3 - HTTP]
@@ -108,18 +116,20 @@ graph TD
 
 #### 1. 介面 (Interfaces)
 為了整合 `aag-core`，宿主應用程式 (Host Application) 必須提供以下介面的實作：
-- **`IConfigStore`**: 管理代理設定 (包含 AI 金鑰、工具權限、已註冊的 MCP 伺服器)。支援事件監聽器，可在設定檔變更時即時重新載入。
-- **`ISecretStore`**: 安全地從 URI 解析機密資訊。例如，CLI 包裝器可以透過作業系統層級的安全儲存區 (Secure Enclave) 來解析 `keytar://my-secret`。
+- **`IConfigStore`**: 管理代理設定 (包含 AI 金鑰、工具權限、已註冊的 MCP 伺服器)。
+- **`ISecretStore`**: 安全地從 URI 解析機密資訊。例如使用 `keytar://my-secret` 系統級加密。
 - **`IAuditLogger`**: 統一的日誌記錄介面。
+- **`IStateStore`**: 分散式狀態共享儲存區。為 V2 叢集部署的核心，允許 `RateLimitMiddleware` 等中介服務自動把記憶體同步至 Redis 等外部伺服器。
 
-#### 2. `ClientManager` (客戶端管理器)
-`ClientManager` 負責監聽設定檔，並維護與下游 MCP 伺服器的主動網路或 stdio 連線。
+#### 2. `ClientManager` (客戶端管理器 - Scale-to-Zero)
+V2 的 `ClientManager` 被升級為無狀態資源調度池，動態按需切換 MCP 狀態。
 - 當設定更改時，自動同步客戶端的生命週期。
-- 動態地將解析後的機密資訊注入至下游傳輸層（透過環境變數、HTTP Headers，或是串流端點）。
-- 透過內建的 Ping Daemon 背景常駐任務來確保下游傳輸層的回應能力，一旦發生超時，會立即觸發指數退避 (Exponential Backoff) 自動重連程序。
+- 新增 **JIT (Just-In-Time) 動態喚醒**：當 AI 發出實際請求時才進行 Downstream 連線，大幅壓縮數千個空閒用戶的記憶體消耗。
+- 新增 **LRU 斷絕回收**：將過期與閒置的程序背景清空至 `DISCONNECTED_IDLE` 狀態，達成完美的 Scale-to-Zero 綠能架構。
 
-#### 3. `ProxyServer` (代理伺服器)
-`ProxyServer` 運用官方的 `@modelcontextprotocol/sdk` 暴露了一個上游的伺服器介面。它主要攔截並處理核心的 MCP 請求：
-- **`ListTools`**: 從所有已連線的下游伺服器收集工具，應用命名空間前綴以避免名稱衝突，接著根據已驗證 AI 客戶端的權限規則進行過濾，並回傳統一的工具清單。
-- **`CallTool`**: 解析帶有前綴的工具名稱，驗證請求，確保 AI 客戶端擁有合法的白名單/黑名單權限，解析 Payload 內必需的機密資訊，最後將執行請求代理至正確的下游 `ClientManager` 連線。
-- **`中介軟體 (Middlewares)`**: 支援可擴充的 `ProxyMiddleware` 管線，提供 `onRequest` 與 `onResponse` 鉤子 (Hooks)，允許在發送前修改引數、並在回傳給 AI 前攔截與遮蔽輸出內容 (如移除機密個資或 API Keys)。
+#### 3. `ProxyServer` (升級為 `ProxySession`)
+`ProxyServer` 主要攔截並處理核心的 MCP 請求，同時摒除任何全域綁定與狀態洩漏：
+- **動態身分切換**: 可透過 `ProxySessionOptions` 給定每個建構實例純粹的 `aiId`，拋棄 `process.env` 高耦合做法。實現在單一 Node.js 程序中建立成千上萬個安全的獨立 `aag-core` 客戶連線。
+- **`ListTools`**: 收集工具，應用命名空間前綴避免名稱衝突，並根據白名單規則進行過濾回傳。此期間亦可使用 JIT 動態喚醒下游服務。
+- **`CallTool`**: 解析與驗證權限，解析 Payload 內必需的機密資訊，最後代理至 JIT 客戶端。
+- **`中介軟體 (Middlewares)`**: 支援可擴充的 `ProxyMiddleware`，內含原生 V2 動態限流 (`RateLimitMiddleware`) 與正則過濾 (`DataMaskingMiddleware`)。

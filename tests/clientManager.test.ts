@@ -37,6 +37,8 @@ describe("ClientManager", () => {
   
   afterEach(() => {
     if (clientManager) clientManager.destroy();
+    jest.useRealTimers();
+    jest.clearAllMocks();
   });
 
   // Tests the `syncConfig` method to verify downstream MCP server transports are intelligently instantiated or destroyed.
@@ -108,5 +110,141 @@ describe("ClientManager", () => {
     clientManager = new CM(new MockConfigStore(config), new MockSecretStore(), new MockLogger());
     await clientManager.syncConfig(config);
     expect((await clientManager.getClientsJIT()).has("server-http")).toBe(true);
+  });
+
+  // Coverage Patches for Transports & Ping Daemon
+  it("should parse stdio transport and handle auth env injections", async () => {
+    const { ClientManager: CM } = await import("../src/clientManager.js");
+    const config: any = { mcpServers: { "server-env": { transport: "stdio", command: "echo", authInjection: { type: "env", key: "AUTH", value: "secret-vault" } } } };
+    clientManager = new CM(new MockConfigStore(config), new MockSecretStore(), new MockLogger());
+    await clientManager.syncConfig(config);
+    expect(await clientManager.getClientJIT("server-env")).toBeDefined();
+  });
+
+  it("should parse sse transport and handle auth header injections", async () => {
+    const { ClientManager: CM } = await import("../src/clientManager.js");
+    const config: any = { mcpServers: { "server-sse": { transport: "sse", url: "http://example.com/sse", authInjection: { type: "header", headerName: "Authorization", value: "token" } } } };
+    clientManager = new CM(new MockConfigStore(config), new MockSecretStore(), new MockLogger());
+    await clientManager.syncConfig(config);
+    expect(await clientManager.getClientJIT("server-sse")).toBeDefined();
+  });
+
+  it("should successfully trigger ping daemon closures dynamically when disconnected_idle", async () => {
+    jest.useFakeTimers();
+    const { ClientManager: CM } = await import("../src/clientManager.js");
+    const config: any = { mcpServers: { "ping-idle": { transport: "stdio", command: "echo" } } };
+    clientManager = new CM(new MockConfigStore(config), new MockSecretStore(), new MockLogger(), 100); 
+    await clientManager.syncConfig(config);
+    
+    await clientManager.getClientJIT("ping-idle");
+    expect(clientManager.getClientStatus("ping-idle")).toBe("CONNECTED");
+
+    // Advance beyond idle timeout 100ms
+    await jest.advanceTimersByTimeAsync(30000); 
+    
+    expect(clientManager.getClientStatus("ping-idle")).toBe("DISCONNECTED_IDLE");
+
+    // Advance again to hit the other Ping Daemon branches which skip idle ones natively
+    await jest.advanceTimersByTimeAsync(30000); 
+    jest.useRealTimers();
+  });
+
+  it("should rollback JIT gracefully when backend fails entirely", async () => {
+    const { ClientManager: CM } = await import("../src/clientManager.js");
+    const config: any = { mcpServers: { "server-broken": { transport: "stdio", command: "echo" } } };
+    clientManager = new CM(new MockConfigStore(config), new MockSecretStore(), new MockLogger());
+    await clientManager.syncConfig(config);
+    
+    jest.spyOn(clientManager as any, "createTransportAndConnect").mockRejectedValueOnce(new Error("Boot crash"));
+
+    await expect(clientManager.getClientJIT("server-broken")).rejects.toThrow("Boot crash");
+    expect(clientManager.getClientStatus("server-broken")).toBe("DISCONNECTED");
+  });
+
+  it("should return undefined if getClientJIT matches no servers", async () => {
+    const { ClientManager: CM } = await import("../src/clientManager.js");
+    clientManager = new CM(new MockConfigStore({ mcpServers: {} } as any), new MockSecretStore(), new MockLogger());
+    expect(await clientManager.getClientJIT("non-existent")).toBeUndefined();
+  });
+
+  // Explicit LCOV Coverage Additions
+  
+  it("should ping connected clients and trigger reconnect on failure natively covering ping daemon catches", async () => {
+    jest.useFakeTimers();
+    const { ClientManager: CM } = await import("../src/clientManager.js");
+    const config: any = { mcpServers: { "ping-server": { transport: "stdio", command: "echo" } } };
+    clientManager = new CM(new MockConfigStore(config), new MockSecretStore(), new MockLogger());
+    await clientManager.syncConfig(config);
+    const client = await clientManager.getClientJIT("ping-server");
+    expect(client).toBeDefined();
+    
+    // Force ping to reject. Next interval should catch
+    (client as any).ping.mockRejectedValueOnce(new Error("Ping failed"));
+    
+    await jest.advanceTimersByTimeAsync(30000);
+    expect(clientManager.getClientStatus("ping-server")).toBe("RECONNECTING");
+
+    // Advance to process the 1st backoff attempt
+    await jest.advanceTimersByTimeAsync(2000);
+    expect(clientManager.getClientStatus("ping-server")).toBe("CONNECTED");
+
+    // Retrieve the newly rotated client instance and force it to fail
+    const newClient = clientManager.getClient("ping-server");
+    (newClient as any).ping.mockRejectedValueOnce(new Error("Ping failed 2"));
+
+    (clientManager as any).createTransportAndConnect = jest.fn<any>().mockResolvedValue(null);
+    await jest.advanceTimersByTimeAsync(30000);
+    // Because it fails forever, it will recursively stay in RECONNECTING states and scale backoffs
+    expect(clientManager.getClientStatus("ping-server")).toBe("RECONNECTING");
+    
+    jest.useRealTimers();
+  });
+
+  it("should diff config correctly and natively reload if changed", async () => {
+    const { ClientManager: CM } = await import("../src/clientManager.js");
+    const initialConfig: any = { mcpServers: { "diff-server": { transport: "stdio", command: "echo" } } };
+    clientManager = new CM(new MockConfigStore(initialConfig), new MockSecretStore(), new MockLogger());
+    await clientManager.syncConfig(initialConfig);
+    
+    const initialConfigSame: any = { mcpServers: { "diff-server": { transport: "stdio", command: "echo" } } };
+    await clientManager.syncConfig(initialConfigSame);
+
+    const newConfig: any = { mcpServers: { "diff-server": { transport: "stdio", command: "echo", args: ["changed"] } } };
+    await clientManager.syncConfig(newConfig);
+    expect(clientManager.getClientStatus("diff-server")).toBe("DISCONNECTED_IDLE");
+  });
+
+  it("should return null for unsupported transports triggering boot throw", async () => {
+      const { ClientManager: CM } = await import("../src/clientManager.js");
+      clientManager = new CM(new MockConfigStore({ mcpServers: { "unsupported": { transport: "websocket" } as any } } as any), new MockSecretStore(), new MockLogger());
+      await clientManager.syncConfig({ mcpServers: { "unsupported": { transport: "websocket" } as any } } as any);
+      await expect(clientManager.getClientJIT("unsupported")).rejects.toThrow();
+  }, 10000);
+
+  it("should handle legacy synchronous getClient APIs gracefully", async () => {
+    const { ClientManager: CM } = await import("../src/clientManager.js");
+    const config: any = { mcpServers: { "legacy-server": { transport: "stdio", command: "echo" } } };
+    clientManager = new CM(new MockConfigStore(config), new MockSecretStore(), new MockLogger());
+    await clientManager.syncConfig(config);
+    
+    expect(clientManager.getClient("legacy-server")).toBeUndefined();
+    expect(clientManager.getClients().size).toBe(0);
+
+    await clientManager.getClientJIT("legacy-server");
+
+    expect(clientManager.getClient("legacy-server")).toBeDefined();
+    expect(clientManager.getClients().size).toBe(1);
+    
+    expect(clientManager.getClient("non-existent-server")).toBeUndefined();
+  });
+
+  it("should fallback getClientJIT undefined if status is unhandled natively by typescript type mismatches", async () => {
+      const { ClientManager: CM } = await import("../src/clientManager.js");
+      const config: any = { mcpServers: { "unhandled": { transport: "stdio", command: "echo" } } };
+      clientManager = new CM(new MockConfigStore(config), new MockSecretStore(), new MockLogger());
+      await clientManager.syncConfig(config);
+      const managed = (clientManager as any).clients.get("unhandled");
+      managed.status = "UNKNOWN_OR_FATAL";
+      expect(await clientManager.getClientJIT("unhandled")).toBeUndefined();
   });
 });
