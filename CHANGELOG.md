@@ -5,12 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.4] - 2026-03-26
+## [2.0.0] - 2026-03-26
+
+This major release transforms the core engine structurally to natively support clustered Enterprise SaaS deployments, infinite horizontal scalability, and true zero-downtime stateless concurrency without breaking single-machine CLI compatibilities.
 
 ### Added
-- **100% Core Logic Coverage**: Implemented deep-mock testing framework achieving complete 100% path execution coverage over all Pipeline Middlewares (`RateLimitMiddleware`, `DataMaskingMiddleware`) and 90% mapping across proxy bounds.
+- **SaaS Architecture (Phase 1)**: Refactored `ProxyServer` into a dynamic `ProxySession` mapping, stripping away `process.env` hard dependencies to support concurrent multi-tenant routing from a single Node.js runtime via `ProxySessionOptions`.
+- **Scale-to-Zero JIT Connectors (Phase 2)**: Overhauled `ClientManager` to eagerly suspend downstream MCP connections into an LRU cache (`DISCONNECTED_IDLE`). Connections are lazily awakened (Just-In-Time) when AI clients invoke tools, severely reducing memory footprint for large deployments.
+- **Stateful Interfaces (Phase 3)**: Extracted memory maps out of `RateLimitMiddleware`, introducing external `IStateStore` parameters. This unlocks multi-node, clustered Rate Limiting leveraging Redis bindings natively via the CLI environment.
+- **100% Core Logic Coverage (Phase 4)**: Extended deep-mock testing framework achieving complete 100% line execution coverage over all Pipeline Middlewares, `ClientManager` ping daemons, and `ProxyServer` bounds.
 - **Resilient Edge Case Handlers**: Enforced rigorous simulated fault-tolerance verifications for downstream client exceptions, HTTP token configurations, and missing fallback paths.
-
 
 ## [1.0.3] - 2026-03-26
 

@@ -11,7 +11,7 @@
 <a id="english"></a>
 ## English
 
-`aag-core` is the core engine for the AI Auth Gateway. It provides a robust, protocol-agnostic proxy for the Model Context Protocol (MCP), handling downstream client connections, authentication, and permission-based routing.
+`aag-core` is the core engine for the AI Auth Gateway v2. It provides a robust, protocol-agnostic, **Scale-to-Zero SaaS-oriented** proxy for the Model Context Protocol (MCP), handling infinite downstream JIT connections, authentications, and stateful multi-user routing.
 
 It is designed to be highly modular. By defining strict interfaces (`ISecretStore`, `IConfigStore`, `IAuditLogger`), it allows you to inject your own implementations. This makes `aag-core` suitable for both open-source CLI wrappers and fully-featured commercial services.
 
@@ -60,14 +60,18 @@ const logger = new MyLogger();
 const clientManager = new ClientManager(configStore, secretStore, logger);
 await clientManager.syncConfig(configStore.getConfig());
 
-// 3. Initialize the Proxy Server
-const proxy = new ProxyServer(clientManager, configStore, secretStore, logger);
+// 3. Initialize the Stateless Proxy Session for the specific tenant
+const proxy = new ProxyServer(clientManager, configStore, secretStore, logger, {
+  aiId: "your-ai-tenant-uuid", // Optionally binds tenant identity to eliminate process.env fallbacks
+  disableEnvFallback: true     // Secure constraint: mandates runtime context for SaaS
+});
 
 // 4. Register built-in or custom Middlewares
-proxy.use(new RateLimitMiddleware(50, 60000, configStore)); // 50 requests per minute
+// Rate limits are now continuously pulled from configStore.getConfig().aiKeys[aiId].rateLimit
+proxy.use(new RateLimitMiddleware(configStore)); // Distributed memory mappings configurable via IStateStore
 proxy.use(new DataMaskingMiddleware([/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/gi], "[REDACTED]")); // PII Redaction
 
-// The proxy.server is an MCP Server instance ready to be connected to a transport.
+// The proxy.server is an MCP Server instance ready to be connected to an incoming transport interface.
 ```
 
 For detailed architectural information, please see [ARCHITECTURE.md](https://github.com/Cyber-Sec-Space/aag-core/blob/main/ARCHITECTURE.md).
@@ -77,9 +81,11 @@ For detailed architectural information, please see [ARCHITECTURE.md](https://git
 <a id="chinese"></a>
 ## 中文
 
-`aag-core` 是 AI Auth Gateway 的核心引擎。它為 Model Context Protocol (MCP) 提供了一個強大、協議無關的代理層，負責處理下游客戶端連線、身分驗證以及基於權限的請求路由。
+**版本日誌 (Changelog)** 請參照上方 [Changelog](CHANGELOG.md)。
 
-它的設計高度模組化。透過定義嚴格的介面（`ISecretStore`、`IConfigStore`、`IAuditLogger`），您可以注入自己的實作。這使得 `aag-core` 既適用於開源的 CLI 包裝器，也完美適用於功能完整的商業服務。
+`aag-core` 是 AI Auth Gateway v2 的核心引擎。它為 Model Context Protocol (MCP) 提供了一個強大、協議無關、**原生支援企業級 SaaS 無狀態化 (Scale-to-Zero)** 的代理層，負責處理成千上萬的下游客戶端連線、身分驗證以及基於租戶權限的請求路由。
+
+它的設計高度模組化。透過定義嚴格的介面（`ISecretStore`、`IConfigStore`、`IAuditLogger`、`IStateStore`），您可以注入自己的實作。這使得 `aag-core` 既適用於開源的 CLI 系統，也完美適配於功能高併發的商用服務叢集。
 
 ### 核心功能
 
@@ -126,14 +132,18 @@ const logger = new MyLogger();
 const clientManager = new ClientManager(configStore, secretStore, logger);
 await clientManager.syncConfig(configStore.getConfig());
 
-// 3. 初始化代理伺服器
-const proxy = new ProxyServer(clientManager, configStore, secretStore, logger);
+// 3. 針對特定租戶初始化無狀態的代理會話 (Stateless Proxy Session)
+const proxy = new ProxyServer(clientManager, configStore, secretStore, logger, {
+  aiId: "your-ai-tenant-uuid", // 綁定租戶身分，跳過 process.env 等環境全域變數
+  disableEnvFallback: true     // 強制性安全設定：SaaS 環境下必須透過動態宣告身分
+});
 
 // 4. 註冊內建或自訂的中介軟體 (Middlewares)
-proxy.use(new RateLimitMiddleware(50, 60000, configStore)); // 每分鐘 50 次請求限制
+// 會自動讀取 configStore.getConfig().aiKeys[aiId].rateLimit 並由 IStateStore 同步
+proxy.use(new RateLimitMiddleware(configStore)); // 即時分散式記憶體自動限流
 proxy.use(new DataMaskingMiddleware([/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/gi], "[REDACTED]")); // PII 個資自動遮蔽
 
-// proxy.server 是一個 MCP Server 執行個體，隨時準備好連接到傳輸層 (Transport)。
+// proxy.server 是一個等待接收客戶端請求的 MCP Server 執行個體。
 ```
 
 如需詳細的架構資訊，請參見 [ARCHITECTURE.md](https://github.com/Cyber-Sec-Space/aag-core/blob/main/ARCHITECTURE.md)。

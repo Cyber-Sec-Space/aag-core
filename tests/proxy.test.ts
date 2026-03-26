@@ -63,6 +63,25 @@ describe("ProxyServer Suite", () => {
         delete process.env.AI_KEY;
     });
 
+    it("should respect disableEnvFallback option directly targeting pure unauthenticated sessions", async () => {
+        const strictProxy = new ProxyServer(clientManager, configStore, new MockSecretStore(), new MockLogger(), { disableEnvFallback: true });
+        const handlers = (strictProxy.server as any)._requestHandlers;
+        const callHandler = handlers.get("tools/call");
+
+        const req = { method: "tools/call", params: { name: "test", arguments: {} } };
+        await expect(callHandler(req, {})).rejects.toThrow("Authentication required: No AI ID context provided for this session.");
+    });
+
+    it("should instantiate safely without optional bindings", () => {
+        const defaultProxy = new ProxyServer(clientManager, configStore, new MockSecretStore(), new MockLogger(), {});
+        expect(defaultProxy).toBeDefined();
+    });
+
+    it("should instantiate securely with pre-authenticated aiId bound natively", () => {
+        const strictProxy = new ProxyServer(clientManager, configStore, new MockSecretStore(), new MockLogger(), { aiId: "saas-tenant" });
+        expect(strictProxy).toBeDefined();
+    });
+
     // ----------------------------------------------------
     // Section: Authentication Engine Validation
     // Verifies `validateAuth` dynamically authorizes the AI agent safely.
@@ -91,6 +110,17 @@ describe("ProxyServer Suite", () => {
             const validateAuth = proxy.validateAuth.bind(proxy);
             expect(() => validateAuth({}, {})).toThrow("Invalid Key for AI ID 'test-ai' provided in environment.");
         });
+
+        it("should throw if aiKeys configurations missing natively in store", () => {
+            configStore = new MockConfigStore({} as any);
+            proxy = new ProxyServer(clientManager, configStore, new MockSecretStore(), new MockLogger());
+            expect(() => proxy.validateAuth({}, {})).toThrow("No AI keys configured in proxy.");
+        });
+
+        it("should throw if the environment ID maps to a missing AI ID key config natively", () => {
+            process.env.AI_ID = "nonexistent-ai";
+            expect(() => proxy.validateAuth({}, {})).toThrow("Invalid AIID from environment: nonexistent-ai");
+        });
     });
 
     // ----------------------------------------------------
@@ -103,15 +133,32 @@ describe("ProxyServer Suite", () => {
         it("should parse listTools correctly and apply correct prefixes", async () => {
             const handlers = (proxy.server as any)._requestHandlers;
             const listHandler = handlers.get("tools/list");
-            if (!listHandler) throw new Error("ListTools handler not found");
 
-            proxy.authenticatedAiId = "test-ai"; // Mock pre-authenticated state avoids env checks depending on timing
+            proxy.authenticatedAiId = "test-ai"; // Optional but redundant mock
             
             const req = { method: "tools/list", params: {} };
             const result = await listHandler(req, {});
             expect(mockGithubClient.listTools).toHaveBeenCalled();
             expect(result.tools.length).toBe(1);
             expect(result.tools[0].name).toBe("github___search_repositories");
+        });
+        
+        it("should gracefully catch listTools errors without crashing the aggregating loop", async () => {
+            const handlers = (proxy.server as any)._requestHandlers;
+            const listHandler = handlers.get("tools/list");
+            proxy.authenticatedAiId = "test-ai";
+            mockGithubClient.listTools.mockRejectedValueOnce(new Error("Connection refused"));
+            const req = { method: "tools/list", params: {} };
+            const result = await listHandler(req, {});
+            expect(result.tools.length).toBe(0); // Fault tolerant
+        });
+
+        it("isAllowed should permit access if permissions block is completely empty naturally", async () => {
+            proxy.authenticatedAiId = "test-ai";
+            const original = configStore.getConfig().aiKeys["test-ai"].permissions;
+            configStore.getConfig().aiKeys["test-ai"].permissions = { allowedServers: [], allowedTools: [] };
+            expect((proxy as any).isAllowed("github", "search_repositories")).toBe(true);
+            configStore.getConfig().aiKeys["test-ai"].permissions = original;
         });
 
         // Verifies `ProxyServer` handles dynamic injection mappings into the raw downstream `arguments`
@@ -141,8 +188,8 @@ describe("ProxyServer Suite", () => {
             await expect(callHandler(req, {})).rejects.toThrow("Permission denied: AI ID 'test-ai' is not allowed to use tool 'github___search_users'.");
         });
 
-        // Simulates the Multiplex Keep-Alive optimization failing fast upon disconnected downstream servers.
-        it("should fail-fast if target downstream server is RECONNECTING", async () => {
+        // Simulates the JIT connection pool failing due to being stuck reconnecting indefinitely
+        it("should fail if target downstream server is stuck RECONNECTING", async () => {
             const handlers = (proxy.server as any)._requestHandlers;
             const callHandler = handlers.get("tools/call");
             
@@ -150,21 +197,37 @@ describe("ProxyServer Suite", () => {
             managed.status = "RECONNECTING";
 
             const req = { method: "tools/call", params: { name: "github___search_repositories", arguments: {} } };
-            await expect(callHandler(req, {})).rejects.toThrow("Downstream server 'github' is currently unavailable and reconnecting.");
+            await expect(callHandler(req, {})).rejects.toThrow("Client github is stuck reconnecting");
             
             managed.status = "CONNECTED"; // Restore
-        });
+        }, 10000);
 
         // Simulates edge case config wipe vulnerabilities
         it("should throw if the downstream targetServerId config is entirely missing", async () => {
             const handlers = (proxy.server as any)._requestHandlers;
             const callHandler = handlers.get("tools/call");
-            
-            proxy.authenticatedAiId = "test-ai"; // Mock pre-authenticated state
-            delete configStore.getConfig().mcpServers["github"]; // Delete from memory config!
-
+            proxy.authenticatedAiId = "test-ai"; 
+            delete configStore.getConfig().mcpServers["github"]; // Delete entirely
             const req = { method: "tools/call", params: { name: "github___search_repositories", arguments: {} } };
             await expect(callHandler(req, {})).rejects.toThrow("fully qualified server not found");
+        });
+
+        it("should throw if the config evaluates as inherently falsy despite key existing natively", async () => {
+            const handlers = (proxy.server as any)._requestHandlers;
+            const callHandler = handlers.get("tools/call");
+            proxy.authenticatedAiId = "test-ai"; 
+            configStore.getConfig().mcpServers["github"] = null as any; 
+            const req = { method: "tools/call", params: { name: "github___search_repositories", arguments: {} } };
+            await expect(callHandler(req, {})).rejects.toThrow("Config for github not found");
+        });
+
+        it("should throw if downstream JIT wakes up gracefully returning null pointer", async () => {
+            const handlers = (proxy.server as any)._requestHandlers;
+            const callHandler = handlers.get("tools/call");
+            proxy.authenticatedAiId = "test-ai";
+            jest.spyOn(clientManager, "getClientJIT").mockResolvedValueOnce(undefined);
+            const req = { method: "tools/call", params: { name: "github___search_repositories", arguments: {} } };
+            await expect(callHandler(req, {})).rejects.toThrow("Client github is disconnected and failed to wake up.");
         });
 
         // Simulates internal downstream crash bubbles

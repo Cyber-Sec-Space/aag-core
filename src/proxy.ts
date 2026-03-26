@@ -10,6 +10,11 @@ import { ISecretStore } from "./interfaces/ISecretStore.js";
 import { IAuditLogger } from "./interfaces/IAuditLogger.js";
 import { ProxyMiddleware, ProxyContext } from "./middleware/types.js";
 
+export interface ProxySessionOptions {
+  aiId?: string; // Pre-authenticated identity for multi-tenant SaaS scaling
+  disableEnvFallback?: boolean; // Secure proxy bounds entirely
+}
+
 export class ProxyServer {
   public server: Server;
   private clientManager: ClientManager;
@@ -17,13 +22,27 @@ export class ProxyServer {
   private secretStore: ISecretStore;
   private logger: IAuditLogger;
   private authenticatedAiId: string | null = null;
+  private disableEnvFallback: boolean = false;
   private middlewares: ProxyMiddleware[] = [];
 
-  constructor(clientManager: ClientManager, configStore: IConfigStore, secretStore: ISecretStore, logger: IAuditLogger) {
+  constructor(
+      clientManager: ClientManager, 
+      configStore: IConfigStore, 
+      secretStore: ISecretStore, 
+      logger: IAuditLogger,
+      options?: ProxySessionOptions
+  ) {
     this.clientManager = clientManager;
     this.configStore = configStore;
     this.secretStore = secretStore;
     this.logger = logger;
+
+    if (options?.aiId) {
+        this.authenticatedAiId = options.aiId;
+    }
+    if (options?.disableEnvFallback !== undefined) {
+        this.disableEnvFallback = options.disableEnvFallback;
+    }
 
     this.server = new Server(
       { name: "mcp-proxy-server", version: "1.0.0" },
@@ -41,6 +60,11 @@ export class ProxyServer {
   private validateAuth(request: any, extra?: any) {
     if (this.authenticatedAiId) {
        return this.authenticatedAiId;
+    }
+
+    if (this.disableEnvFallback) {
+         this.logger.error("Proxy", "Authentication failed: No AI ID injected and environment fallback disabled.");
+         throw new Error("Authentication required: No AI ID context provided for this session.");
     }
 
     const aiid = process.env.AI_ID;
@@ -119,7 +143,7 @@ export class ProxyServer {
     this.server.setRequestHandler(ListToolsRequestSchema, async (request, extra) => {
       this.validateAuth(request, extra);
       const allTools: Tool[] = [];
-      const clients = this.clientManager.getClients();
+      const clients = await this.clientManager.getClientsJIT();
 
       for (const [serverId, client] of clients.entries()) {
         try {
@@ -168,21 +192,16 @@ export class ProxyServer {
         throw new Error(`Permission denied: AI ID '${this.authenticatedAiId}' is not allowed to use tool '${requestedName}'.`);
       }
 
-      const clientStatus = this.clientManager.getClientStatus(targetServerId);
-      if (clientStatus === "RECONNECTING") {
-         this.logger.warn("Proxy", `CallTool blocked: downstream ${targetServerId} is reconnecting`);
-         throw new Error(`Downstream server '${targetServerId}' is currently unavailable and reconnecting.`);
-      }
-
-      const client = this.clientManager.getClient(targetServerId);
-      if (!client) {
-        this.logger.error("Proxy", `Downstream client ${targetServerId} is disconnected`);
-        throw new Error(`Client ${targetServerId} is disconnected`);
-      }
-
       const config = this.configStore.getConfig()?.mcpServers[targetServerId] as any;
       if (!config) {
         throw new Error(`Config for ${targetServerId} not found`);
+      }
+
+      // JIT Connection Wake-Up
+      const client = await this.clientManager.getClientJIT(targetServerId);
+      if (!client) {
+        this.logger.error("Proxy", `Downstream client ${targetServerId} could not be connected JIT.`);
+        throw new Error(`Client ${targetServerId} is disconnected and failed to wake up.`);
       }
 
       let args = { ...(request.params.arguments || {}) } as any;

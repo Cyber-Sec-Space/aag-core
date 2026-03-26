@@ -1,7 +1,9 @@
 import { ProxyMiddleware, ProxyContext } from "./types.js";
 import { IConfigStore } from "../interfaces/IConfigStore.js";
+import { IStateStore } from "../interfaces/IStateStore.js";
+import { MemoryStateStore } from "../interfaces/MemoryStateStore.js";
 
-interface TokenBucket {
+export interface TokenBucket {
   tokens: number;
   lastRefill: number;
 }
@@ -11,24 +13,26 @@ interface TokenBucket {
  * Limits requests per AI_ID based on a global or per-user configuration.
  */
 export class RateLimitMiddleware implements ProxyMiddleware {
-  private buckets: Map<string, TokenBucket> = new Map();
   private maxTokens: number;
   private refillRate: number; // tokens per millisecond
   private configStore?: IConfigStore;
+  private stateStore: IStateStore;
 
   /**
    * @param maxRequests Maximum number of requests allowed in the window (default fallback).
    * @param windowMs The time window in milliseconds (default fallback).
    * @param configStore Optional config store to look up per-AI limits.
+   * @param stateStore Optional clustered state store (e.g. Redis). Defaults to Memory.
    */
-  constructor(maxRequests: number, windowMs: number, configStore?: IConfigStore) {
+  constructor(maxRequests: number, windowMs: number, configStore?: IConfigStore, stateStore?: IStateStore) {
     this.maxTokens = maxRequests;
     this.refillRate = maxRequests / windowMs;
     this.configStore = configStore;
+    this.stateStore = stateStore || new MemoryStateStore();
   }
 
-  private getBucket(aiId: string): TokenBucket {
-    let bucket = this.buckets.get(aiId);
+  private async getBucket(aiId: string): Promise<TokenBucket> {
+    let bucket = await this.stateStore.get(`ratelimit:${aiId}`);
     if (!bucket) {
       let limit = this.maxTokens;
       let window = 60000;
@@ -47,7 +51,7 @@ export class RateLimitMiddleware implements ProxyMiddleware {
       }
 
       bucket = { tokens: limit, lastRefill: Date.now() };
-      this.buckets.set(aiId, bucket);
+      await this.stateStore.set(`ratelimit:${aiId}`, bucket);
     }
     return bucket;
   }
@@ -79,13 +83,15 @@ export class RateLimitMiddleware implements ProxyMiddleware {
   }
 
   async onRequest(context: ProxyContext, args: any) {
-    const bucket = this.getBucket(context.aiId);
+    const bucket = await this.getBucket(context.aiId);
     this.refill(bucket, context.aiId);
 
     if (bucket.tokens >= 1) {
       bucket.tokens -= 1;
+      await this.stateStore.set(`ratelimit:${context.aiId}`, bucket);
       return args;
     } else {
+      await this.stateStore.set(`ratelimit:${context.aiId}`, bucket);
       throw new Error(`Rate limit exceeded for AI ID '${context.aiId}'. Please try again later.`);
     }
   }
