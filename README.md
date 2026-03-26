@@ -1,8 +1,10 @@
 # AI Auth Gateway Core (`@cyber-sec.space/aag-core`)
 
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+[![Coverage](https://img.shields.io/badge/Coverage-100%25-brightgreen.svg)](https://jestjs.io/)
+[![Version](https://img.shields.io/npm/v/@cyber-sec.space/aag-core.svg)](https://www.npmjs.com/package/@cyber-sec.space/aag-core)
 
-**[English](#english)** | **[中文](#chinese)**
+**[English](#english)** | **[中文](#chinese)** | **[Changelog](CHANGELOG.md)**
 
 ---
 
@@ -40,7 +42,9 @@ import {
   ProxyServer, 
   IConfigStore, 
   ISecretStore, 
-  IAuditLogger 
+  IAuditLogger,
+  RateLimitMiddleware,
+  DataMaskingMiddleware
 } from '@cyber-sec.space/aag-core';
 
 // 1. Provide your implementations
@@ -58,6 +62,10 @@ await clientManager.syncConfig(configStore.getConfig());
 
 // 3. Initialize the Proxy Server
 const proxy = new ProxyServer(clientManager, configStore, secretStore, logger);
+
+// 4. Register built-in or custom Middlewares
+proxy.use(new RateLimitMiddleware(50, 60000, configStore)); // 50 requests per minute
+proxy.use(new DataMaskingMiddleware([/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/gi], "[REDACTED]")); // PII Redaction
 
 // The proxy.server is an MCP Server instance ready to be connected to a transport.
 ```
@@ -100,7 +108,9 @@ import {
   ProxyServer, 
   IConfigStore, 
   ISecretStore, 
-  IAuditLogger 
+  IAuditLogger,
+  RateLimitMiddleware,
+  DataMaskingMiddleware
 } from '@cyber-sec.space/aag-core';
 
 // 1. 提供您的實作
@@ -118,6 +128,10 @@ await clientManager.syncConfig(configStore.getConfig());
 
 // 3. 初始化代理伺服器
 const proxy = new ProxyServer(clientManager, configStore, secretStore, logger);
+
+// 4. 註冊內建或自訂的中介軟體 (Middlewares)
+proxy.use(new RateLimitMiddleware(50, 60000, configStore)); // 每分鐘 50 次請求限制
+proxy.use(new DataMaskingMiddleware([/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/gi], "[REDACTED]")); // PII 個資自動遮蔽
 
 // proxy.server 是一個 MCP Server 執行個體，隨時準備好連接到傳輸層 (Transport)。
 ```

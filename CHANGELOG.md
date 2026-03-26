@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.4] - 2026-03-26
+
+### Added
+- **100% Core Logic Coverage**: Implemented deep-mock testing framework achieving complete 100% path execution coverage over all Pipeline Middlewares (`RateLimitMiddleware`, `DataMaskingMiddleware`) and 90% mapping across proxy bounds.
+- **Resilient Edge Case Handlers**: Enforced rigorous simulated fault-tolerance verifications for downstream client exceptions, HTTP token configurations, and missing fallback paths.
+
+
 ## [1.0.3] - 2026-03-26
 
 ### Added

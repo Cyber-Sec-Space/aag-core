@@ -95,4 +95,18 @@ describe("ClientManager", () => {
     expect(clientManager.getClientStatus("server-1")).toBe("CONNECTED");
     jest.useRealTimers();
   });
+
+  // Tests the HTTP streaming downstream constructor branches and Auth Injection header mechanics.
+  it("should parse streamableHttp transport and handle auth header injections", async () => {
+    const { ClientManager: CM } = await import("../src/clientManager.js");
+    const config: any = { 
+        mcpServers: { 
+            "server-http": { transport: "http", url: "http://example.com/mcp", authInjection: { type: "header", headerName: "Authorization", value: "token" } } 
+        } 
+    };
+    
+    clientManager = new CM(new MockConfigStore(config), new MockSecretStore(), new MockLogger());
+    await clientManager.syncConfig(config);
+    expect(clientManager.getClients().has("server-http")).toBe(true);
+  });
 });
