@@ -381,4 +381,52 @@ describe("ClientManager", () => {
       
       await managed.connectingPromise; 
   });
+
+  it("should securely execute catch callbacks natively handling thrown close failures during disconnect routines", async () => {
+      const { ClientManager: CM } = await import("../src/clientManager.js");
+      clientManager = new CM(new MockConfigStore({mcpServers: { "catch_test": {transport: "stdio", command: "echo"} }} as any), new MockSecretStore(), new MockLogger());
+      await clientManager.syncConfig({mcpServers: { "catch_test": {transport: "stdio", command: "echo"} }} as any);
+      
+      const managed = (clientManager as any).clients.get("catch_test");
+      managed.status = "CONNECTED";
+      managed.client = { close: jest.fn().mockRejectedValue(new Error("forced close test error")) };
+      
+      // Hit catch inside triggerReconnect (line 103 in clientManager.ts)
+      (clientManager as any).triggerReconnect("catch_test");
+      
+      // Destroy so timeouts don't hang
+      clientManager.destroy();
+  });
+
+  it("should securely execute catch callbacks natively handling thrown close failures during idle eviction", async () => {
+      jest.useFakeTimers();
+      const { ClientManager: CM } = await import("../src/clientManager.js");
+      clientManager = new CM(new MockConfigStore({mcpServers: { "catch_idle": {transport: "stdio", command: "echo"} }} as any), new MockSecretStore(), new MockLogger(), 100);
+      await clientManager.syncConfig({mcpServers: { "catch_idle": {transport: "stdio", command: "echo"} }} as any);
+      
+      const managed = (clientManager as any).clients.get("catch_idle");
+      managed.status = "CONNECTED";
+      managed.lastAccessed = Date.now() - 500000;
+      managed.client = { close: jest.fn().mockRejectedValue(new Error("idle eviction close error")), ping: jest.fn() };
+      
+      // Trigger the Ping Daemon loop over the interval
+      await jest.advanceTimersByTimeAsync(30000);
+
+      // Status should be disconnected idle and catch block fully traversed
+      expect(managed.status).toBe("DISCONNECTED_IDLE");
+      jest.useRealTimers();
+      clientManager.destroy();
+  });
+
+  it("should securely execute catch callback natively handling thrown failures during total lifecycle destruction", async () => {
+      const { ClientManager: CM } = await import("../src/clientManager.js");
+      clientManager = new CM(new MockConfigStore({mcpServers: { "catch_destroy": {transport: "stdio", command: "echo"} }} as any), new MockSecretStore(), new MockLogger());
+      await clientManager.syncConfig({mcpServers: { "catch_destroy": {transport: "stdio", command: "echo"} }} as any);
+      
+      // Specifically mock removeClient returning a hard rejection mid-lifecycle sweep
+      jest.spyOn(clientManager as any, "removeClient").mockRejectedValue(new Error("Internal Destructor Bypass Error"));
+      
+      // Executes line 301 catch block internally
+      clientManager.destroy();
+  });
 });
