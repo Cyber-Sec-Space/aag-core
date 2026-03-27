@@ -33,6 +33,45 @@ describe("DataMaskingMiddleware Suite", () => {
         expect(processed.content[2].text).toBe("Your access key is [REDACTED]. Be careful.");
         expect(processed.content[3]).toEqual({ type: "text" });
     });
+
+    it("should dynamically apply tenant-specific overrides from IConfigStore", async () => {
+        const mockConfigStore = {
+            getConfig: () => ({
+                aiKeys: {
+                    "tenant-A": {
+                        pluginConfig: {
+                            "aag-core-data-masking": {
+                                rules: ["TOP_SECRET"],
+                                maskString: "[XXX]"
+                            }
+                        }
+                    },
+                    "tenant-B": {
+                        pluginConfig: {
+                            "aag-core-data-masking": {
+                                // Missing rules array, falls back to global
+                                maskString: "[YYY]"
+                            }
+                        }
+                    }
+                }
+            })
+        } as any;
+        
+        const masker = new DataMaskingMiddleware([/global_secret/gi], "***", mockConfigStore);
+        
+        // Tenant A: Should use tenant rules and tenant mask
+        const ctxA: any = { aiId: "tenant-A", serverId: "test", toolName: "test" };
+        const resultA = { content: [{ type: "text", text: "Global: global_secret. Tenant: TOP_SECRET" }] };
+        const processedA = await masker.onResponse(ctxA, resultA) as any;
+        expect(processedA.content[0].text).toBe("Global: global_secret. Tenant: [XXX]");
+        
+        // Tenant B: Should use global rules and tenant mask
+        const ctxB: any = { aiId: "tenant-B", serverId: "test", toolName: "test" };
+        const resultB = { content: [{ type: "text", text: "Global: global_secret. Tenant: TOP_SECRET" }] };
+        const processedB = await masker.onResponse(ctxB, resultB) as any;
+        expect(processedB.content[0].text).toBe("Global: [YYY]. Tenant: TOP_SECRET");
+    });
 });
 
 import { DataMaskingPlugin } from "../src/middleware/dataMasking.js";
