@@ -1,3 +1,4 @@
+import { jest } from "@jest/globals";
 import { DataMaskingMiddleware } from "../src/middleware/dataMasking.js";
 
 describe("DataMaskingMiddleware Suite", () => {
@@ -31,5 +32,39 @@ describe("DataMaskingMiddleware Suite", () => {
         expect(processed.content[1].text).toBeUndefined(); // Verifies isolation
         expect(processed.content[2].text).toBe("Your access key is [REDACTED]. Be careful.");
         expect(processed.content[3]).toEqual({ type: "text" });
+    });
+});
+
+import { DataMaskingPlugin } from "../src/middleware/dataMasking.js";
+
+describe("DataMaskingPlugin Suite", () => {
+    it("should register middleware when rules are provided", () => {
+        const mockProxy: any = { use: jest.fn() };
+        const mockLogger: any = { info: jest.fn(), debug: jest.fn() };
+        
+        DataMaskingPlugin.register({
+            proxyServer: mockProxy,
+            configStore: {} as any,
+            logger: mockLogger,
+            options: { rules: [/secret/gi] }
+        });
+
+        expect(mockProxy.use).toHaveBeenCalled();
+        expect(mockLogger.info).toHaveBeenCalledWith("DataMaskingPlugin", "Built-in Data Masking plugin registered.");
+    });
+
+    it("should skip registering when rules are empty", () => {
+        const mockProxy: any = { use: jest.fn() };
+        const mockLogger: any = { debug: jest.fn() };
+
+        DataMaskingPlugin.register({
+            proxyServer: mockProxy,
+            configStore: {} as any,
+            logger: mockLogger,
+            options: { rules: [] }
+        });
+
+        expect(mockProxy.use).not.toHaveBeenCalled();
+        expect(mockLogger.debug).toHaveBeenCalledWith("DataMaskingPlugin", "DataMaskingPlugin loaded but no rules provided. Middleware will not be active.");
     });
 });

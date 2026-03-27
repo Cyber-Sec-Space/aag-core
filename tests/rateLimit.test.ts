@@ -86,3 +86,35 @@ describe("RateLimitMiddleware Suite", () => {
     await expect(limiter.onRequest(slowCtx, {})).rejects.toThrow();
   });
 });
+
+import { RateLimitPlugin } from "../src/middleware/rateLimit.js";
+
+describe("RateLimitPlugin Suite", () => {
+    it("should register middleware successfully with options", () => {
+        const mockProxy: any = { use: jest.fn() };
+        const mockLogger: any = { info: jest.fn() };
+        
+        RateLimitPlugin.register({
+            proxyServer: mockProxy,
+            configStore: {} as any,
+            logger: mockLogger,
+            options: { maxRequests: 100, windowMs: 1000 }
+        });
+
+        expect(mockProxy.use).toHaveBeenCalled();
+        expect(mockLogger.info).toHaveBeenCalledWith("RateLimitPlugin", "Built-in Rate Limiting plugin registered.");
+    });
+
+    it("should register middleware with defaults if no options are present", () => {
+        const mockProxy: any = { use: jest.fn() };
+        const mockLogger: any = { info: jest.fn() };
+
+        RateLimitPlugin.register({
+            proxyServer: mockProxy,
+            configStore: {} as any,
+            logger: mockLogger
+        });
+
+        expect(mockProxy.use).toHaveBeenCalled();
+    });
+});

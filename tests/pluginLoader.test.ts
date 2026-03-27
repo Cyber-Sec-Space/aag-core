@@ -90,4 +90,37 @@ describe("PluginLoader", () => {
         await loader.loadPlugins(mockProxyServer, mockConfigStore, []);
         expect(mockLogger.debug).toHaveBeenCalledWith("PluginLoader", "No plugins configured to load.");
     });
+    
+    it("should resolve and load a local plugin using a relative path", async () => {
+        const loader = new PluginLoader(mockLogger);
+        
+        const fixturePath = path.resolve(__dirname, "localRelativePlugin.cjs");
+        fs.writeFileSync(fixturePath, `
+            module.exports = {
+                name: "local-relative-plugin",
+                version: "1.0.0",
+                register: (context) => {
+                    if (context.options) {
+                        context.options.wasCalled = true;
+                    }
+                }
+            };
+        `);
+
+        const relativePath = "./tests/localRelativePlugin.cjs";
+        const pluginOptions = { wasCalled: false };
+        
+        await loader.loadPlugins(mockProxyServer, mockConfigStore, [
+            { name: relativePath, options: pluginOptions }
+        ]);
+
+        expect(pluginOptions.wasCalled).toBe(true);
+        expect(mockLogger.info).toHaveBeenCalledWith(
+            "PluginLoader",
+            "Successfully registered plugin: local-relative-plugin (v1.0.0)"
+        );
+
+        fs.unlinkSync(fixturePath);
+    });
 });
+
