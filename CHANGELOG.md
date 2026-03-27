@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.0.1] - 2026-03-27
+## [2.1.0] - 2026-03-27
 
 ### Added
 - **Plugin Ecosystem**: Introduced `IPlugin` interface and dynamic `PluginLoader`, decoupling `RateLimitMiddleware` and `DataMaskingMiddleware` into standard plugins. This architecture allows SaaS administrators to configure extensible third-party community extensions dynamically, perfectly isolating multi-tenant `pluginConfig` variables per `aiId` without rebuilding the core.
