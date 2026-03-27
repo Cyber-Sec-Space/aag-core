@@ -82,6 +82,34 @@ await DataMaskingPlugin.register({ proxyServer: proxy, configStore, logger, opti
 // The proxy.server is an MCP Server instance ready to be connected to an incoming transport interface.
 ```
 
+### Plugin Configuration (JSON Registry)
+
+Plugins are dynamically loaded and allow for per-tenant parameter overrides in SaaS environments. To activate plugins, your configuration object (served by `IConfigStore`) should map them in the global `plugins` array:
+
+```json
+{
+  "plugins": [
+    {
+      "name": "@cyber-sec.space/aag-core-rate-limit",
+      "options": { "maxRequests": 1000, "windowMs": 60000 }
+    },
+    {
+      "name": "./my-custom-local-plugin.js"
+    }
+  ],
+  "mcpServers": { /* ... */ },
+  "aiKeys": {
+    "premium-user-id": {
+      "permissions": { /* ... */ },
+      "pluginConfig": {
+        "aag-core-rate-limit": { "maxRequests": 5000 },
+        "aag-core-data-masking": { "rules": ["(?i)credit_card"] }
+      }
+    }
+  }
+}
+```
+
 For detailed architectural information, please see [ARCHITECTURE.md](https://github.com/Cyber-Sec-Space/aag-core/blob/main/ARCHITECTURE.md).
 
 ---
@@ -159,6 +187,34 @@ await RateLimitPlugin.register({ proxyServer: proxy, configStore, logger, option
 await DataMaskingPlugin.register({ proxyServer: proxy, configStore, logger, options: { rules: [/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/gi] } });
 
 // proxy.server 是一個等待接收客戶端請求的 MCP Server 執行個體。
+```
+
+### 插件註冊表設定指南 (Plugin Configuration)
+
+在新的生態系架構中，插件採用動態加載。您必須在設定檔 (由 `IConfigStore` 提供) 根目錄的 `plugins` 陣列中宣告它們。如果您身處 SaaS 多租戶環境，您還可以針對每個 `aiId` 分別宣告並覆寫專屬的插件參數 (`pluginConfig`)：
+
+```json
+{
+  "plugins": [
+    {
+      "name": "@cyber-sec.space/aag-core-rate-limit",
+      "options": { "maxRequests": 1000, "windowMs": 60000 }
+    },
+    {
+      "name": "./my-custom-local-plugin.js"
+    }
+  ],
+  "mcpServers": { /* ... */ },
+  "aiKeys": {
+    "premium-user-id": {
+      "permissions": { /* ... */ },
+      "pluginConfig": {
+        "aag-core-rate-limit": { "maxRequests": 5000 },
+        "aag-core-data-masking": { "rules": ["(?i)credit_card"] }
+      }
+    }
+  }
+}
 ```
 
 如需詳細的架構資訊，請參見 [ARCHITECTURE.md](https://github.com/Cyber-Sec-Space/aag-core/blob/main/ARCHITECTURE.md)。
