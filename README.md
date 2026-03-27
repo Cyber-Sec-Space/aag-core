@@ -27,6 +27,12 @@ It is designed to be highly modular. By defining strict interfaces (`ISecretStor
 - **Plugin Ecosystem & Middlewares**: Standardized `IPlugin` interface and dynamic `PluginLoader` allowing community developers to seamlessly inject third-party extensions. All plugins natively inherit multi-user isolation and shared `IConfigStore` parameter structures. Built-in `DataMaskingPlugin` provided for PII redaction.
 - **Scale-to-Zero Rate Limiting**: Built-in `RateLimitPlugin` employing the Token Bucket algorithm over an atomic `IRateLimitStore`. Supports dynamic, per-user limits mapped automatically by linking `IConfigStore`.
 
+### Security & Host Requirements
+
+When integrating `aag-core` into SaaS, Multi-Tenant, or internet-exposed environments, host developers must adhere to the following constraints:
+- **Strictly Stateless Downstreams**: To conserve machine resources, `aag-core` multiplexes tool execution commands from different AI users (hitting the same MCP server ID) into the **same background process/connection**. Downstream MCP servers MUST NOT maintain state (e.g., user-specific chat histories or session databases) unless they securely isolate operations using an `aiId` injected into the tool arguments. Failure to ensure stateless tools may result in Cross-Tenant State Pollution.
+- **SSRF Prevention on Config**: `ClientManager` connects blindly to any `url` mapped inside the `IConfigStore`. You must explicitly sanitize, validate, and restrict (e.g., blocking internal VPC ranges like `10.x.x.x` or AWS `169.254.x.x`) any user-provided URL configurations before writing them to the store.
+
 ### Installation
 
 ```bash
@@ -166,6 +172,12 @@ For detailed architectural information, please see [ARCHITECTURE.md](https://git
 - **動態連線中斷 (Session Management)**: 內建 `SessionManager` 可偵測即時的憑證撤銷，並強制剔除對應使用者的現有長時間連線 (SSE/Stdio)。
 - **全域插件生態系與中介軟體 (Plugins & Middlewares)**: 內建標準化 `IPlugin` 介面與 `PluginLoader`，允許社群開發者輕易掛載第三方擴充套件，且完美繼承多使用者環境下的動態配置隔離特性。原生包含可過濾機密個資的 `DataMaskingPlugin`。
 - **動態限流防護 (Rate Limiting)**: 內建 `RateLimitPlugin` 實踐 Token Bucket 演算法，針對不同 AI 使用者設定分級防護。依託 `IRateLimitStore` 提供可靠的跨叢集原子性計數。
+
+### 資安與宿主環境要求 (Security Requirements)
+
+當您將 `aag-core` 部署於 SaaS、多租戶 (Multi-Tenant) 或開放式網路環境時，宿主開發者 (Host Developers) 必須嚴格遵守以下架構限制：
+- **絕對無狀態的下游伺服器 (Strictly Stateless Downstreams)**：為了達成極致的效能與擴展性，如果多位不同的 AI 終端使用者請求相同的 MCP 伺服器 ID，`aag-core` 會將這些請求「多工多工 (Multiplex)」分派至**同一個底層背景程序或連線**。因此，下游的 MCP 工具必須是絕對無狀態的。如果下游工具本身持有狀態（例如記憶體快取或暫存資料庫），除非其嚴格透過 Payload 中的 `aiId` 進行隔離，否則將產生跨租戶資料外洩 (Cross-Tenant State Pollution) 的嚴重風險。
+- **防範伺服器端請求偽造 (SSRF)**：`ClientManager` 會無條件連線至您 `IConfigStore` 提供的任何 `url`。在將這類使用者自訂或動態產生的連接埠套用至 Store 之前，您必須在您的應用程式層預先過濾並阻擋惡意的內部 IP（例如強制攔截針對 `169.254.169.254` 或是企業內網 `10.x.x.x` 的配置請求）。
 
 ### 安裝方式
 
