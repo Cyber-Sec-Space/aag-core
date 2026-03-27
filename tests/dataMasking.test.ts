@@ -53,13 +53,13 @@ describe("DataMaskingPlugin Suite", () => {
         expect(mockLogger.info).toHaveBeenCalledWith("DataMaskingPlugin", "Built-in Data Masking plugin registered.");
     });
 
-    it("should skip registering when rules are empty", () => {
+    it("should skip registering when rules are empty and no configStore is provided", () => {
         const mockProxy: any = { use: jest.fn() };
         const mockLogger: any = { debug: jest.fn() };
 
         DataMaskingPlugin.register({
             proxyServer: mockProxy,
-            configStore: {} as any,
+            configStore: undefined as any,
             logger: mockLogger,
             options: { rules: [] }
         });
@@ -68,17 +68,31 @@ describe("DataMaskingPlugin Suite", () => {
         expect(mockLogger.debug).toHaveBeenCalledWith("DataMaskingPlugin", "DataMaskingPlugin loaded but no rules provided. Middleware will not be active.");
     });
 
-    it("should use default mask string and handle undefined options natively", () => {
+    it("should use default mask string and handle undefined options natively without configStore", () => {
         const mockProxy: any = { use: jest.fn() };
         const mockLogger: any = { debug: jest.fn() };
 
         DataMaskingPlugin.register({
             proxyServer: mockProxy,
-            configStore: {} as any,
+            configStore: undefined as any,
             logger: mockLogger,
             options: undefined
         } as any);
 
         expect(mockLogger.debug).toHaveBeenCalledWith("DataMaskingPlugin", "DataMaskingPlugin loaded but no rules provided. Middleware will not be active.");
+    });
+    it("should register middleware when rules are empty but configStore is provided for tenant overrides", () => {
+        const mockProxy: any = { use: jest.fn() };
+        const mockLogger: any = { info: jest.fn() };
+
+        DataMaskingPlugin.register({
+            proxyServer: mockProxy,
+            configStore: {} as any,
+            logger: mockLogger,
+            options: { rules: [] }
+        });
+
+        expect(mockProxy.use).toHaveBeenCalled();
+        expect(mockLogger.info).toHaveBeenCalledWith("DataMaskingPlugin", "Built-in Data Masking plugin registered.");
     });
 });
