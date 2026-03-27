@@ -234,7 +234,7 @@ export class ProxyServer {
         return result;
       } catch (e: any) {
         this.logger.error("Proxy", `Error calling ${actualToolName} on ${targetServerId}: ${e.message}`);
-        throw e;
+        throw new Error(`Internal Gateway Error: Downstream MCP server '${targetServerId}' encountered a failure.`);
       }
     });
   }

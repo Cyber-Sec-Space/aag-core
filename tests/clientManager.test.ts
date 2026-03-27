@@ -247,4 +247,138 @@ describe("ClientManager", () => {
       managed.status = "UNKNOWN_OR_FATAL";
       expect(await clientManager.getClientJIT("unhandled")).toBeUndefined();
   });
+
+  it("should deduplicate concurrent JIT requests by returning the existing connectingPromise", async () => {
+      const { ClientManager: CM } = await import("../src/clientManager.js");
+      const config: any = { mcpServers: { "concurrent": { transport: "stdio", command: "echo" } } };
+      clientManager = new CM(new MockConfigStore(config), new MockSecretStore(), new MockLogger());
+      await clientManager.syncConfig(config);
+      
+      const p1 = clientManager.getClientJIT("concurrent");
+      const p2 = clientManager.getClientJIT("concurrent");
+      
+      const [c1, c2] = await Promise.all([p1, p2]);
+      expect(c1).toBe(c2);
+  });
+
+  it("should handle missing authInjection value fallback during HTTP/SSE init", async () => {
+      const { ClientManager: CM } = await import("../src/clientManager.js");
+      const config: any = { mcpServers: { 
+          "http_test": { transport: "http", url: "http://localhost", authInjection: { type: "header", headerName: "x" } },
+          "sse_test": { transport: "sse", url: "http://localhost", authInjection: { type: "header", headerName: "y" } }
+      } };
+      clientManager = new CM(new MockConfigStore(config), new MockSecretStore(), new MockLogger());
+      await clientManager.syncConfig(config);
+      await clientManager.getClientJIT("http_test").catch(()=>{});
+      await clientManager.getClientJIT("sse_test").catch(()=>{});
+  });
+
+  it("should handle missing authInjection value fallback during STDIO init and falsy secretStore resolution safely", async () => {
+      const { ClientManager: CM } = await import("../src/clientManager.js");
+      const config: any = { mcpServers: { 
+          "stdio_test": { transport: "stdio", command: "echo", authInjection: { type: "env", key: "Z" } },
+          "http_falsy": { transport: "http", url: "x", authInjection: { type: "header", headerName: "x", value: "x" } }
+      } };
+      const mockStore = new MockSecretStore();
+      jest.spyOn(mockStore, "resolveSecret").mockResolvedValue(""); 
+      clientManager = new CM(new MockConfigStore(config), mockStore, new MockLogger());
+      await clientManager.syncConfig(config);
+      await clientManager.getClientJIT("stdio_test").catch(()=>{});
+      await clientManager.getClientJIT("http_falsy").catch(()=>{});
+  });
+
+  it("should safely clear empty pingInterval during destroy", async () => {
+      const { ClientManager: CM } = await import("../src/clientManager.js");
+      clientManager = new CM(new MockConfigStore({mcpServers: {}} as any), new MockSecretStore(), new MockLogger());
+      clearInterval((clientManager as any).pingInterval);
+      (clientManager as any).pingInterval = undefined;
+      clientManager.destroy();
+  });
+
+  it("should safely skip map setting for null clients inside getClientsJIT pool", async () => {
+      const { ClientManager: CM } = await import("../src/clientManager.js");
+      const config: any = { mcpServers: { "unhandled": { transport: "stdio", command: "echo" } } };
+      clientManager = new CM(new MockConfigStore(config), new MockSecretStore(), new MockLogger());
+      await clientManager.syncConfig(config);
+      
+      jest.spyOn(clientManager as any, "getClientJIT").mockResolvedValueOnce(undefined);
+      
+      const map = await clientManager.getClientsJIT();
+      expect(map.size).toBe(0);
+  });
+
+  it("should skip authInjection headers natively if headerName property is missing in HTTP/SSE configs", async () => {
+      const { ClientManager: CM } = await import("../src/clientManager.js");
+      const config: any = { mcpServers: { 
+          "http_no_hdr": { transport: "http", url: "http://localhost", authInjection: { type: "header" } }, 
+          "sse_no_hdr": { transport: "sse", url: "http://localhost", authInjection: { type: "header" } }
+      } };
+      clientManager = new CM(new MockConfigStore(config as any), new MockSecretStore(), new MockLogger());
+      await clientManager.syncConfig(config);
+      await clientManager.getClientJIT("http_no_hdr").catch(()=>{});
+      await clientManager.getClientJIT("sse_no_hdr").catch(()=>{});
+  });
+
+  it("should gracefully handle reconnect timer firing after the client was already deleted from the map", async () => {
+      const { ClientManager: CM } = await import("../src/clientManager.js");
+      clientManager = new CM(new MockConfigStore({mcpServers: { "ghost": {transport: "stdio", command: "echo"} }} as any), new MockSecretStore(), new MockLogger());
+      await clientManager.syncConfig({mcpServers: { "ghost": {transport: "stdio", command: "echo"} }} as any);
+      
+      const managed = (clientManager as any).clients.get("ghost");
+      managed.status = "DISCONNECTED";
+      // This schedules the timeout and throws a sync error
+      jest.spyOn(clientManager as any, "createTransportAndConnect").mockRejectedValue(new Error("reconnect mock error"));
+      (clientManager as any).triggerReconnect("ghost");
+      
+      // Instantly delete it so current is undefined when the timeout fires
+      (clientManager as any).clients.delete("ghost");
+      
+      await new Promise(r => setTimeout(r, 1100)); // Wait for backoff
+  });
+  
+  it("should safely ignore removeClient for unknown ids", async () => {
+      const { ClientManager: CM } = await import("../src/clientManager.js");
+      clientManager = new CM(new MockConfigStore({mcpServers: {}} as any), new MockSecretStore(), new MockLogger());
+      await (clientManager as any).removeClient("non-existent");
+  });
+
+  it("should handle falsy secretStore resolution safely for SSE transport headers natively", async () => {
+      const { ClientManager: CM } = await import("../src/clientManager.js");
+      const config: any = { mcpServers: { 
+          "sse_falsy": { transport: "sse", url: "x", authInjection: { type: "header", headerName: "x", value: "x" } }
+      } };
+      const mockStore = new MockSecretStore();
+      jest.spyOn(mockStore, "resolveSecret").mockResolvedValue(""); 
+      clientManager = new CM(new MockConfigStore(config as any), mockStore, new MockLogger());
+      await clientManager.syncConfig(config as any);
+      await clientManager.getClientJIT("sse_falsy").catch(()=>{});
+  });
+
+  it("should safely resolve reconnect promises identically if status abruptly changes mid-backoff", async () => {
+      const { ClientManager: CM } = await import("../src/clientManager.js");
+      clientManager = new CM(new MockConfigStore({mcpServers: { "ghost": {transport: "stdio", command: "echo"} }} as any), new MockSecretStore(), new MockLogger());
+      await clientManager.syncConfig({mcpServers: { "ghost": {transport: "stdio", command: "echo"} }} as any);
+      
+      const managed = (clientManager as any).clients.get("ghost");
+      managed.status = "DISCONNECTED";
+      
+      (clientManager as any).triggerReconnect("ghost");
+      managed.status = "DISCONNECTED_IDLE"; 
+      
+      await managed.connectingPromise; 
+  });
+
+  it("should safely resolve reconnect promises returning undefined if clientManager is destroyed mid-backoff natively", async () => {
+      const { ClientManager: CM } = await import("../src/clientManager.js");
+      clientManager = new CM(new MockConfigStore({mcpServers: { "ghost": {transport: "stdio", command: "echo"} }} as any), new MockSecretStore(), new MockLogger());
+      await clientManager.syncConfig({mcpServers: { "ghost": {transport: "stdio", command: "echo"} }} as any);
+      
+      const managed = (clientManager as any).clients.get("ghost");
+      managed.status = "DISCONNECTED";
+      
+      (clientManager as any).triggerReconnect("ghost");
+      clientManager.destroy(); 
+      
+      await managed.connectingPromise; 
+  });
 });

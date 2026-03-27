@@ -11,7 +11,7 @@ This document provides a high-level overview of the architectural design of `@cy
 
 ### Design Philosophy
 
-The core package is designed with **Inversion of Control (IoC)** and **Dependency Injection** in mind. By keeping the core agnostic to the environment (CLI, Background Daemon, Cloud Service), we allow it to be seamlessly integrated into both open-source local setups and commercial cloud-based deployments. 
+The core package is designed with **Inversion of Control (IoC)** and **Dependency Injection** in mind. By keeping the core agnostic to the environment, we allow it to be seamlessly integrated into various deployments. 
 
 The core solely concerns itself with MCP routing, connection management, and authorization, delegating storage and logging to external implementations.
 
@@ -21,24 +21,22 @@ The core solely concerns itself with MCP routing, connection management, and aut
 graph TD
     Client[AI Client] -->|MCP Request| Proxy(ProxySession)
     
-    subgraph ProxyInternal [ProxySession Core / Tenant-Bound]
+    subgraph ProxyInternal [ProxySession Core / Multi-User Bound]
         Auth[validateAuth]
         RBAC[isAllowed Check]
-        RL[Rate Limiting]
-        MW[Middleware Interceptors]
+        Plugin[Plugin Ecosystem Interceptors]
     end
     
     Proxy --> Auth
     Auth --> RBAC
-    RBAC --> RL
-    RL --> MW
-    MW --> CM(ClientManager)
+    RBAC --> Plugin
+    Plugin --> CM(ClientManager)
     
-    Proxy -->|Reads Tenant Config| Config(IConfigStore)
+    Proxy -->|Reads Multi-User Config| Config(IConfigStore)
     Proxy -->|Logs Activities| Logger(IAuditLogger)
     
-    Config -.->|Dynamic Limits| RL
-    State(IStateStore) -.->|Distributed State| RL
+    Config -.->|User pluginConfig| Plugin
+    State(IRateLimitStore / etc) -.->|Global Stores| Plugin
     
     CM -->|Resolves Credentials| Secrets(ISecretStore)
     CM -.->|Scale-to-Zero LRU Eviction| Downstream1
@@ -53,20 +51,20 @@ To integrate `aag-core`, the host application must provide implementations for:
 - **`IConfigStore`**: Manages the proxy configuration (AI keys, tool permissions, registered MCP servers). It supports event listeners to reload configurations on the fly.
 - **`ISecretStore`**: Securely resolves secrets from URIs. For example, a CLI wrapper might resolve `keytar://my-secret` using OS-level secure enclaves.
 - **`IAuditLogger`**: Centralized logging interface.
-- **`IStateStore`**: Distributed atomic map for memory clusters, required by clustered native components like `RateLimitMiddleware` for syncing across V2 SaaS nodes.
+- **`IRateLimitStore`**: Distributed atomic request mapper for rate buckets, required by components like `RateLimitMiddleware` to accurately map synchronized API limits across horizontal scaling (e.g. inject Redis scripts).
 
 #### 2. `ClientManager`
 The scale-to-zero `ClientManager` is responsible for observing the configuration and lazily managing downstream MCP connections.
 - Automatically syncs client lifecycles when configurations change.
-- Native **JIT (Just-In-Time) connectability** spawns MCP downstreams only when actively invoked, saving immense memory footprints locally and remotely.
+- Native **JIT (Just-In-Time) connectability** spawns MCP downstreams only when actively invoked, saving immense memory footprints.
 - Idle active TCP/stdio connections eventually fall to `DISCONNECTED_IDLE` leveraging background **LRU ping sweeping** after long durations of inactivity.
 
 #### 3. `ProxyServer` (as a `ProxySession`)
 The `ProxyServer` leverages the official `@modelcontextprotocol/sdk` to expose an upstream server interface. It intercepts major MCP routines under a stateless identity schema:
-- **Tenant-Bound Configuration**: Injecting `ProxySessionOptions` removes the reliance on `process.env`. `aag-core` easily boots thousands of concurrent, independently authenticated sessions running across isolated users globally.
+- **Multi-User Configuration**: Injecting `ProxySessionOptions` removes the reliance on `process.env`. `aag-core` easily boots thousands of concurrent, independently authenticated sessions running across isolated users globally.
 - **`ListTools`**: Gathers tools from all connected downstream servers dynamically waking them, applies namespace prefixes to prevent collisions, filters them against the authenticated AI client's permission rules, and returns the unified list.
 - **`CallTool`**: Parses the prefixed tool name, authenticates the request, ensures the AI client holds the proper whitelist/blacklist permissions, resolves necessary payload credentials, and proxies the execution to the newly awakened downstream connection.
-- **`Middlewares`**: Supports an extensible `ProxyMiddleware` pipeline with `onRequest` and `onResponse` hooks, allowing interception and mutation of tool arguments natively.
+- **`Plugin Ecosystem`**: Standardized `IPlugin` interfaces loaded dynamically via `PluginLoader`. Community extensions (e.g. `RateLimitPlugin`, `DataMaskingPlugin`) register powerful `ProxyMiddleware` pipelines combining native multi-user `pluginConfig` isolation with global `options`.
 
 ---
 
@@ -87,24 +85,22 @@ The `ProxyServer` leverages the official `@modelcontextprotocol/sdk` to expose a
 graph TD
     Client[AI 客戶端] -->|MCP 請求| Proxy(ProxySession)
     
-    subgraph ProxyInternal [ProxySession 核心邏輯 / 租戶隔離]
+    subgraph ProxyInternal [ProxySession 核心邏輯 / 多使用者隔離]
         Auth[身分驗證 validateAuth]
         RBAC[權限檢查 isAllowed]
-        RL[流量限制 Rate Limiting]
-        MW[中介軟體攔截器 Middlewares]
+        Plugin[插件生態系攔截器 Plugin Ecosystem]
     end
     
     Proxy --> Auth
     Auth --> RBAC
-    RBAC --> RL
-    RL --> MW
-    MW --> CM(ClientManager)
+    RBAC --> Plugin
+    Plugin --> CM(ClientManager)
 
-    Proxy -->|讀取租戶設定| Config(IConfigStore)
+    Proxy -->|讀取多使用者設定| Config(IConfigStore)
     Proxy -->|記錄活動| Logger(IAuditLogger)
     
-    Config -.->|動態限流參數| RL
-    State(IStateStore) -.->|自動儲存分散式狀態| RL
+    Config -.->|使用者 pluginConfig| Plugin
+    State(IRateLimitStore / 等) -.->|全域儲存| Plugin
     
     CM -->|解析機密憑證| Secrets(ISecretStore)
     CM -.->|Scale-to-Zero LRU 資源回收| Downstream1
@@ -119,7 +115,7 @@ graph TD
 - **`IConfigStore`**: 管理代理設定 (包含 AI 金鑰、工具權限、已註冊的 MCP 伺服器)。
 - **`ISecretStore`**: 安全地從 URI 解析機密資訊。例如使用 `keytar://my-secret` 系統級加密。
 - **`IAuditLogger`**: 統一的日誌記錄介面。
-- **`IStateStore`**: 分散式狀態共享儲存區。為 V2 叢集部署的核心，允許 `RateLimitMiddleware` 等中介服務自動把記憶體同步至 Redis 等外部伺服器。
+- **`IRateLimitStore`**: 分散式限流儲存區。為 V2 叢集擴展部署的核心，允許 `RateLimitMiddleware` 中介服務使用 Redis 的原子性實作同步多台 Pod 機器的限流次數。
 
 #### 2. `ClientManager` (客戶端管理器 - Scale-to-Zero)
 V2 的 `ClientManager` 被升級為無狀態資源調度池，動態按需切換 MCP 狀態。
@@ -132,4 +128,4 @@ V2 的 `ClientManager` 被升級為無狀態資源調度池，動態按需切換
 - **動態身分切換**: 可透過 `ProxySessionOptions` 給定每個建構實例純粹的 `aiId`，拋棄 `process.env` 高耦合做法。實現在單一 Node.js 程序中建立成千上萬個安全的獨立 `aag-core` 客戶連線。
 - **`ListTools`**: 收集工具，應用命名空間前綴避免名稱衝突，並根據白名單規則進行過濾回傳。此期間亦可使用 JIT 動態喚醒下游服務。
 - **`CallTool`**: 解析與驗證權限，解析 Payload 內必需的機密資訊，最後代理至 JIT 客戶端。
-- **`中介軟體 (Middlewares)`**: 支援可擴充的 `ProxyMiddleware`，內含原生 V2 動態限流 (`RateLimitMiddleware`) 與正則過濾 (`DataMaskingMiddleware`)。
+- **`全域插件生態系 (Plugin Ecosystem)`**: 內建標準化 `IPlugin` 介面與 `PluginLoader`。支援動態外部擴充套件註冊，社群開發者能輕易發布原生支援多使用者隔離 (`pluginConfig`) 參數架構的插件（如預設提供的 `RateLimitPlugin` 與 `DataMaskingPlugin`）。

@@ -5,12 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.0.0] - 2026-03-26
-
-This major release transforms the core engine structurally to natively support clustered Enterprise SaaS deployments, infinite horizontal scalability, and true zero-downtime stateless concurrency without breaking single-machine CLI compatibilities.
+## [2.1.0] - 2026-03-27
 
 ### Added
-- **SaaS Architecture (Phase 1)**: Refactored `ProxyServer` into a dynamic `ProxySession` mapping, stripping away `process.env` hard dependencies to support concurrent multi-tenant routing from a single Node.js runtime via `ProxySessionOptions`.
+- **Plugin Ecosystem**: Introduced `IPlugin` interface and dynamic `PluginLoader`, decoupling `RateLimitMiddleware` and `DataMaskingMiddleware` into standard plugins. This architecture allows administrators to configure extensible third-party community extensions dynamically, perfectly isolating multi-user `pluginConfig` variables per `aiId` without rebuilding the core.
+- **Dynamic Connection Interruption**: Introduced an active `SessionManager` class that monitors `configChanged` events from `IConfigStore`. It gracefully and forcefully terminates established 'Active SSE Sessions' and underlying Stdio runtimes instantly whenever an administrator revokes an AI identity's credential.
+- **Distributed Rate Limiting via `IRateLimitStore`**: Extracted the Token Bucket counter logic out of `RateLimitMiddleware` into an injectable `IRateLimitStore` interface. This allows systems to natively implement distributed storage backends (e.g. Redis evaluation scripts) for perfectly synchronized multi-pod horizontal scaling without race conditions. Also includes a localized `MemoryRateLimitStore` default fallback.
+- **Configurable Downstream Timeouts**: Extracted hardcoded networking proxy daemon variables into `SystemConfigSchema` (`pingIntervalMs`, `pingTimeoutMs`, `idleTimeoutMs`, `reconnectTimeoutMs`).
+
+### Fixed
+- **Security**: Mitigated a Regular Expression Denial of Service (ReDoS) vulnerability by overriding the transitive dependency `path-to-regexp` to `^8.4.0`.
+- **JIT Connection Pooling Mutex**: Solved a major resource bottleneck by implementing a `connectingPromise` Mutex in `ClientManager`, preventing Serverless/SaaS `getClientJIT` concurrent polling storms.
+- **Error Sandboxing**: Masked downstream `CallTool` errors in `ProxyServer` as 'Internal Gateway Error's to prevent backend infrastructural stack-trace leaks to AI clients.
+- **Memory Token Bucket Thread Safety**: Added asynchronous execution locks to `MemoryRateLimitStore` for robust race-condition immunity.
+- **Session Manager Cleanup Warning**: Documented necessary `SessionManager.unregister()` garbage collection instructions for Host implementors to avoid memory leaks.
+
+## [2.0.0] - 2026-03-26
+
+This major release transforms the core engine structurally to natively support clustered deployments, infinite horizontal scalability, and true zero-downtime stateless concurrency without breaking standalone CLI compatibilities.
+
+### Added
+- **Multi-User Architecture**: Refactored `ProxyServer` into a dynamic `ProxySession` mapping, stripping away `process.env` hard dependencies to support concurrent multi-user routing from a single Node.js runtime via `ProxySessionOptions`.
 - **Scale-to-Zero JIT Connectors (Phase 2)**: Overhauled `ClientManager` to eagerly suspend downstream MCP connections into an LRU cache (`DISCONNECTED_IDLE`). Connections are lazily awakened (Just-In-Time) when AI clients invoke tools, severely reducing memory footprint for large deployments.
 - **Stateful Interfaces (Phase 3)**: Extracted memory maps out of `RateLimitMiddleware`, introducing external `IStateStore` parameters. This unlocks multi-node, clustered Rate Limiting leveraging Redis bindings natively via the CLI environment.
 - **100% Core Logic Coverage (Phase 4)**: Extended deep-mock testing framework achieving complete 100% line execution coverage over all Pipeline Middlewares, `ClientManager` ping daemons, and `ProxyServer` bounds.

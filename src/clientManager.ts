@@ -15,6 +15,7 @@ export interface ManagedClient {
   status: ClientStatus;
   reconnectAttempts: number;
   lastAccessed: number;
+  connectingPromise?: Promise<Client | undefined>;
 }
 
 export class ClientManager {
@@ -26,11 +27,18 @@ export class ClientManager {
   private isDestroyed = false;
   private idleTimeoutMs: number;
 
-  constructor(configStore: IConfigStore, secretStore: ISecretStore, logger: IAuditLogger, idleTimeoutMs: number = 300000) {
+  private pingIntervalMs: number;
+  private pingTimeoutMs: number;
+
+  constructor(configStore: IConfigStore, secretStore: ISecretStore, logger: IAuditLogger, idleTimeoutMs?: number) {
     this.configStore = configStore;
     this.secretStore = secretStore;
     this.logger = logger;
-    this.idleTimeoutMs = idleTimeoutMs;
+    
+    const sys = this.configStore.getConfig()?.system;
+    this.idleTimeoutMs = idleTimeoutMs ?? sys?.idleTimeoutMs ?? 300000;
+    this.pingIntervalMs = sys?.pingIntervalMs ?? 30000;
+    this.pingTimeoutMs = sys?.pingTimeoutMs ?? 5000;
     
     this.startPingDaemon();
   }
@@ -51,7 +59,7 @@ export class ClientManager {
 
           try {
             const pingPromise = managed.client.ping();
-            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Ping timeout")), 5000));
+            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Ping timeout")), this.pingTimeoutMs));
             await Promise.race([pingPromise, timeoutPromise]);
           } catch (e: any) {
             this.logger.warn("ClientManager", `Client ${id} failed ping check: ${e.message}. Triggering reconnect.`);
@@ -59,7 +67,7 @@ export class ClientManager {
           }
         }
       }
-    }, 30000); // 30 seconds
+    }, this.pingIntervalMs);
   }
 
   public async syncConfig(config: ProxyConfig) {
@@ -101,26 +109,32 @@ export class ClientManager {
 
     this.logger.info("ClientManager", `Scheduling reconnect for ${id} in ${backoffTime}ms (Attempt ${managed.reconnectAttempts})`);
 
-    setTimeout(async () => {
-      if (this.isDestroyed) return;
-      const current = this.clients.get(id);
-      if (!current || current.status !== "RECONNECTING") return;
+    managed.connectingPromise = new Promise((resolve) => {
+      setTimeout(async () => {
+        if (this.isDestroyed) { resolve(undefined); return; }
+        const current = this.clients.get(id);
+        if (!current || current.status !== "RECONNECTING") { resolve(undefined); return; }
 
-      try {
-        const client = await this.createTransportAndConnect(id, current.config);
-        if (client) {
-           current.client = client;
-           current.status = "CONNECTED";
-           current.reconnectAttempts = 0;
-           this.logger.info("ClientManager", `Successfully reconnected downstream: ${id}`);
-        } else {
-           throw new Error("createTransport returned null");
+        try {
+          const client = await this.createTransportAndConnect(id, current.config);
+          if (client) {
+             current.client = client;
+             current.status = "CONNECTED";
+             current.reconnectAttempts = 0;
+             this.logger.info("ClientManager", `Successfully reconnected downstream: ${id}`);
+             resolve(client);
+          } else {
+             throw new Error("createTransport returned null");
+          }
+        } catch (e: any) {
+          this.logger.error("ClientManager", `Reconnect failed for ${id}: ${e.message}`);
+          resolve(undefined);
+          this.triggerReconnect(id);
+        } finally {
+          current.connectingPromise = undefined;
         }
-      } catch (e: any) {
-        this.logger.error("ClientManager", `Reconnect failed for ${id}: ${e.message}`);
-        this.triggerReconnect(id);
-      }
-    }, backoffTime);
+      }, backoffTime);
+    });
   }
 
   private async removeClient(id: string) {
@@ -222,31 +236,34 @@ export class ClientManager {
 
     if (managed.status === "DISCONNECTED" || managed.status === "DISCONNECTED_IDLE") {
         managed.status = "RECONNECTING";
-        try {
-            const client = await this.createTransportAndConnect(id, managed.config);
-            if (client) {
-                managed.client = client;
-                managed.status = "CONNECTED";
-                managed.reconnectAttempts = 0;
-                this.logger.info("ClientManager", `JIT connection established for: ${id}`);
-                return client;
+        managed.connectingPromise = (async () => {
+            try {
+                const client = await this.createTransportAndConnect(id, managed.config);
+                if (client) {
+                    managed.client = client;
+                    managed.status = "CONNECTED";
+                    managed.reconnectAttempts = 0;
+                    this.logger.info("ClientManager", `JIT connection established for: ${id}`);
+                    return client;
+                } else {
+                    throw new Error(`Unsupported or null transport connection for: ${id}`);
+                }
+            } catch (e: any) {
+                this.logger.error("ClientManager", `JIT connection failed for ${id}: ${e.message}`);
+                managed.status = "DISCONNECTED"; // Revert so next JIT can try
+                throw e;
+            } finally {
+                managed.connectingPromise = undefined;
             }
-        } catch (e: any) {
-            this.logger.error("ClientManager", `JIT connection failed for ${id}: ${e.message}`);
-            managed.status = "DISCONNECTED"; // Revert so next JIT can try
-            throw e;
-        }
+        })();
+        return managed.connectingPromise;
     }
 
-    // Await ongoing reconnection natively
     if (managed.status === "RECONNECTING") {
-        for (let i = 0; i < 50; i++) {
-            await new Promise(resolve => setTimeout(resolve, 100));
-            const currentStatus = this.clients.get(id)?.status;
-            if (currentStatus === "CONNECTED" && this.clients.get(id)?.client) return this.clients.get(id)!.client!;
-            if (currentStatus === "DISCONNECTED") break;
+        if (managed.connectingPromise) {
+            return managed.connectingPromise;
         }
-        throw new Error(`Client ${id} is stuck reconnecting`);
+        throw new Error(`Client ${id} is stuck reconnecting without a lock`);
     }
 
     return undefined;

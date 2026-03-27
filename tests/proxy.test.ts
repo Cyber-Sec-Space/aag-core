@@ -161,6 +161,45 @@ describe("ProxyServer Suite", () => {
             configStore.getConfig().aiKeys["test-ai"].permissions = original;
         });
 
+        it("isAllowed should permit access if permissions block is completely undefined natively", async () => {
+            proxy.authenticatedAiId = "test-ai";
+            const original = configStore.getConfig().aiKeys["test-ai"].permissions;
+            configStore.getConfig().aiKeys["test-ai"].permissions = undefined;
+            expect((proxy as any).isAllowed("github", "search_repositories")).toBe(true);
+            configStore.getConfig().aiKeys["test-ai"].permissions = original;
+        });
+
+        it("should return true if tool pattern is exactly a wildcard", async () => {
+            proxy.authenticatedAiId = "test-ai";
+            const original = configStore.getConfig().aiKeys["test-ai"].permissions;
+            configStore.getConfig().aiKeys["test-ai"].permissions = { allowedServers: ["*"], allowedTools: ["*"] };
+            expect((proxy as any).isAllowed("github", "search_repositories")).toBe(true);
+            configStore.getConfig().aiKeys["test-ai"].permissions = original;
+        });
+
+        it("should return false if authenticatedAiId is missing natively", () => {
+            proxy.authenticatedAiId = undefined;
+            expect((proxy as any).isAllowed("github", "tool")).toBe(false);
+        });
+
+        it("should return false if auth config is missing for authId", () => {
+            proxy.authenticatedAiId = "non-existent";
+            expect((proxy as any).isAllowed("github", "tool")).toBe(false);
+        });
+
+        it("should return false if denied list strictly matches", () => {
+            proxy.authenticatedAiId = "test-ai";
+            expect((proxy as any).isAllowed("github", "search_users")).toBe(false);
+        });
+
+        it("should return false if deniedServers strictly matches", () => {
+            proxy.authenticatedAiId = "test-ai";
+            const original = configStore.getConfig().aiKeys["test-ai"].permissions;
+            configStore.getConfig().aiKeys["test-ai"].permissions = { deniedServers: ["github"] };
+            expect((proxy as any).isAllowed("github", "search_repositories")).toBe(false);
+            configStore.getConfig().aiKeys["test-ai"].permissions = original;
+        });
+
         // Verifies `ProxyServer` handles dynamic injection mappings into the raw downstream `arguments`
         // without allowing the end-user (AI) to ever see or possess the injected secret token directly.
         it("should perform authInjection on callTool if configured and forward properly", async () => {
@@ -239,7 +278,66 @@ describe("ProxyServer Suite", () => {
             mockGithubClient.callTool.mockRejectedValue(new Error("Downstream execution crash"));
 
             const req = { method: "tools/call", params: { name: "github___search_repositories", arguments: {} } };
-            await expect(callHandler(req, {})).rejects.toThrow("Downstream execution crash");
+            await expect(callHandler(req, {})).rejects.toThrow("Internal Gateway Error: Downstream MCP server");
+        });
+
+        it("should iterate and skip non-matching servers during callTool extraction", async () => {
+            const handlers = (proxy.server as any)._requestHandlers;
+            const callHandler = handlers.get("tools/call");
+            configStore.getConfig().mcpServers["dummy"] = { transport: "stdio", command: "echo" } as any;
+            
+            const req = { method: "tools/call", params: { name: "github___search_repositories", arguments: {} } };
+            const result = await callHandler(req, {});
+            expect(result.content[0].text).toBe("Success");
+        });
+
+        it("should throw fully qualified not found if the prefix loop strictly exhausts without a valid break natively", async () => {
+            const handlers = (proxy.server as any)._requestHandlers;
+            const callHandler = handlers.get("tools/call");
+            
+            configStore.getConfig().mcpServers = { "dummy": {}, "another": {} } as any; 
+            
+            const req = { method: "tools/call", params: { name: "github___search_repositories", arguments: {} } }; 
+            await expect(callHandler(req, {})).rejects.toThrow("fully qualified server not found");
+        });
+
+        it("should safely evaluate when mcpServers block is entirely native-undefined", async () => {
+            const handlers = (proxy.server as any)._requestHandlers;
+            const callHandler = handlers.get("tools/call");
+            
+            const original = configStore.getConfig().mcpServers;
+            delete (configStore.getConfig() as any).mcpServers;
+            
+            const req = { method: "tools/call", params: { name: "github___search_repositories", arguments: {} } }; 
+            await expect(callHandler(req, {})).rejects.toThrow("fully qualified server not found");
+            
+            configStore.getConfig().mcpServers = original;
+        });
+
+        it("should safely process callTool when request arguments are entirely omitted or injection values absent", async () => {
+            const handlers = (proxy.server as any)._requestHandlers;
+            const callHandler = handlers.get("tools/call");
+            
+            configStore.getConfig().mcpServers["github"].authInjection!.value = undefined;
+
+            const req = { method: "tools/call", params: { name: "github___search_repositories" } }; 
+            const result = await callHandler(req, {});
+            expect(mockGithubClient.callTool).toHaveBeenCalledWith(expect.objectContaining({
+                arguments: expect.objectContaining({ token: "resolved-" }) // resolves undefined->""
+            }));
+            expect(result.content[0].text).toBe("Success");
+            
+            configStore.getConfig().mcpServers["github"].authInjection!.value = "githubToken";
+        });
+
+        it("should skip authInjection entirely if key is missing locally in proxy engine", async () => {
+            const handlers = (proxy.server as any)._requestHandlers;
+            const callHandler = handlers.get("tools/call");
+            configStore.getConfig().mcpServers["github"].authInjection!.key = undefined;
+            const req = { method: "tools/call", params: { name: "github___search_repositories", arguments: {} } }; 
+            const result = await callHandler(req, {});
+            expect(result.content[0].text).toBe("Success");
+            configStore.getConfig().mcpServers["github"].authInjection!.key = "token"; // restore
         });
     });
 
@@ -276,6 +374,24 @@ describe("ProxyServer Suite", () => {
 
             // Verify onResponse mutation masked the PII securely
             expect(result.content[0].text).toBe("Admin: ***");
+        });
+
+        it("should safely process middlewares that omit onRequest/onResponse or return undefined natively", async () => {
+            const handlers = (proxy.server as any)._requestHandlers;
+            const callHandler = handlers.get("tools/call");
+
+            // Adds a middleware with logic returning undefined
+            proxy.use({
+                onRequest: async (ctx: any, args: any) => undefined,
+                onResponse: async (ctx: any, result: any) => undefined
+            });
+
+            // Adds a middleware completely missing onRequest/onResponse hooks
+            proxy.use({});
+
+            const req = { method: "tools/call", params: { name: "github___search_repositories", arguments: { a: 1 } } };
+            const result = await callHandler(req, {});
+            expect(result.content[0].text).toBe("Success");
         });
     });
 
