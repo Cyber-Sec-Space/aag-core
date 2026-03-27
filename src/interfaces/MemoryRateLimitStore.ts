@@ -8,6 +8,20 @@ export interface TokenBucket {
 export class MemoryRateLimitStore implements IRateLimitStore {
   private buckets = new Map<string, TokenBucket>();
   private locks = new Map<string, Promise<void>>();
+  private gcInterval: ReturnType<typeof setInterval>;
+
+  constructor() {
+    this.gcInterval = setInterval(() => {
+      const now = Date.now();
+      for (const [id, bucket] of this.buckets.entries()) {
+        if (now - bucket.lastRefill > 3600000) { // 1 hour inactivity threshold
+          this.buckets.delete(id);
+          this.locks.delete(id);
+        }
+      }
+    }, 300000);
+    this.gcInterval.unref(); // Prevent blocking process exit natively
+  }
 
   async consume(id: string, maxTokens: number, windowMs: number): Promise<boolean> {
     const prevLock = this.locks.get(id) || Promise.resolve();

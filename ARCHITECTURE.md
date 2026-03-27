@@ -66,6 +66,10 @@ The `ProxyServer` leverages the official `@modelcontextprotocol/sdk` to expose a
 - **`CallTool`**: Parses the prefixed tool name, authenticates the request, ensures the AI client holds the proper whitelist/blacklist permissions, resolves necessary payload credentials, and proxies the execution to the newly awakened downstream connection.
 - **`Plugin Ecosystem`**: Standardized `IPlugin` interfaces loaded dynamically via `PluginLoader`. Community extensions (e.g. `RateLimitPlugin`, `DataMaskingPlugin`) register powerful `ProxyMiddleware` pipelines combining native multi-user `pluginConfig` isolation with global `options`.
 
+#### 4. Security & Multi-Tenant Constraints
+- **Cross-Tenant State Pollution**: `aag-core` multiplexes tool calls from different users routing to the same downstream MCP server ID through a shared background process to conserve resources. Therefore, **Downstream MCP Servers must be strictly stateless**. If a downstream server maintains state (e.g., chat history, databases) without explicitly verifying the `aiId` inside the tool arguments, Tenant A could potentially access Tenant B's data. If stateful downstream servers are required, SaaS providers must deploy isolated server instances per tenant in the `IConfigStore`.
+- **SSRF via `IConfigStore`**: The `ClientManager` connects to any `url` provided by the Host's configuration. Host applications must strictly sanitize and validate URLs returned by `IConfigStore` to prevent Server-Side Request Forgery (SSRF) attacks against internal VPC networks (e.g., `169.254.169.254`).
+
 ---
 
 <a id="chinese"></a>
@@ -129,3 +133,7 @@ V2 的 `ClientManager` 被升級為無狀態資源調度池，動態按需切換
 - **`ListTools`**: 收集工具，應用命名空間前綴避免名稱衝突，並根據白名單規則進行過濾回傳。此期間亦可使用 JIT 動態喚醒下游服務。
 - **`CallTool`**: 解析與驗證權限，解析 Payload 內必需的機密資訊，最後代理至 JIT 客戶端。
 - **`全域插件生態系 (Plugin Ecosystem)`**: 內建標準化 `IPlugin` 介面與 `PluginLoader`。支援動態外部擴充套件註冊，社群開發者能輕易發布原生支援多使用者隔離 (`pluginConfig`) 參數架構的插件（如預設提供的 `RateLimitPlugin` 與 `DataMaskingPlugin`）。
+
+#### 4. 資安與多租戶隔離限制 (Security Constraints)
+- **跨租戶狀態污染 (Cross-Tenant State Pollution)**: 為了追求最高效能，`aag-core` 會將指向同一個 MCP 伺服器 ID 的多名使用者請求，多工對接至**同一個下游背景程序**。因此，**下游的 MCP 伺服器必須是絕對無狀態的 (Strictly Stateless)**。如果下游伺服器具有狀態（例如共用 SQLite 或記憶體快取），租戶 A 可能會存取到租戶 B 的資料。如果必須使用有狀態工具，SaaS 營運商應在 `IConfigStore` 中為不同租戶配置獨立的 MCP 伺服器實例。
+- **伺服器端請求偽造 (SSRF)**: `ClientManager` 會無條件連線至 `IConfigStore` 所提供的 `url`。宿主應用程式 (Host Application) 寫入配置前，必須嚴格驗證 URL 格式並實作內部內網 IP 黑名單，以防止攻擊者透過 SSRF 探測內部 VPC 網路（如 AWS `169.254.169.254`）。
