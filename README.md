@@ -69,7 +69,7 @@ const proxy = new ProxyServer(clientManager, configStore, secretStore, logger, {
 
 // 4. Register built-in or custom Middlewares
 // Rate limits are now continuously pulled from configStore.getConfig().aiKeys[aiId].rateLimit
-proxy.use(new RateLimitMiddleware(configStore)); // Distributed memory mappings configurable via IStateStore
+proxy.use(new RateLimitMiddleware(100, 60000, configStore)); // Distributed memory mappings configurable via IRateLimitStore
 proxy.use(new DataMaskingMiddleware([/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/gi], "[REDACTED]")); // PII Redaction
 
 // The proxy.server is an MCP Server instance ready to be connected to an incoming transport interface.
@@ -86,7 +86,7 @@ For detailed architectural information, please see [ARCHITECTURE.md](https://git
 
 `aag-core` 是 AI Auth Gateway v2 的核心引擎。它為 Model Context Protocol (MCP) 提供了一個強大、協議無關、**原生支援企業級 SaaS 無狀態化 (Scale-to-Zero)** 的代理層，負責處理成千上萬的下游客戶端連線、身分驗證以及基於租戶權限的請求路由。
 
-它的設計高度模組化。透過定義嚴格的介面（`ISecretStore`、`IConfigStore`、`IAuditLogger`、`IStateStore`），您可以注入自己的實作。這使得 `aag-core` 既適用於開源的 CLI 系統，也完美適配於功能高併發的商用服務叢集。
+它的設計高度模組化。透過定義嚴格的介面（`ISecretStore`、`IConfigStore`、`IAuditLogger`、`IRateLimitStore`），您可以注入自己的實作。這使得 `aag-core` 既適用於開源的 CLI 系統，也完美適配於功能高併發的商用服務叢集。
 
 ### 核心功能
 
@@ -141,8 +141,8 @@ const proxy = new ProxyServer(clientManager, configStore, secretStore, logger, {
 });
 
 // 4. 註冊內建或自訂的中介軟體 (Middlewares)
-// 會自動讀取 configStore.getConfig().aiKeys[aiId].rateLimit 並由 IStateStore 同步
-proxy.use(new RateLimitMiddleware(configStore)); // 即時分散式記憶體自動限流
+// 會自動讀取 configStore.getConfig().aiKeys[aiId].rateLimit 並由 IRateLimitStore 同步
+proxy.use(new RateLimitMiddleware(100, 60000, configStore)); // 即時分散式記憶體自動限流可透過 IRateLimitStore 同步
 proxy.use(new DataMaskingMiddleware([/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/gi], "[REDACTED]")); // PII 個資自動遮蔽
 
 // proxy.server 是一個等待接收客戶端請求的 MCP Server 執行個體。

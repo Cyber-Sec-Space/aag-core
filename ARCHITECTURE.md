@@ -38,7 +38,7 @@ graph TD
     Proxy -->|Logs Activities| Logger(IAuditLogger)
     
     Config -.->|Dynamic Limits| RL
-    State(IStateStore) -.->|Distributed State| RL
+    State(IRateLimitStore) -.->|Distributed Limits| RL
     
     CM -->|Resolves Credentials| Secrets(ISecretStore)
     CM -.->|Scale-to-Zero LRU Eviction| Downstream1
@@ -53,7 +53,7 @@ To integrate `aag-core`, the host application must provide implementations for:
 - **`IConfigStore`**: Manages the proxy configuration (AI keys, tool permissions, registered MCP servers). It supports event listeners to reload configurations on the fly.
 - **`ISecretStore`**: Securely resolves secrets from URIs. For example, a CLI wrapper might resolve `keytar://my-secret` using OS-level secure enclaves.
 - **`IAuditLogger`**: Centralized logging interface.
-- **`IStateStore`**: Distributed atomic map for memory clusters, required by clustered native components like `RateLimitMiddleware` for syncing across V2 SaaS nodes.
+- **`IRateLimitStore`**: Distributed atomic request mapper for rate buckets, required by components like `RateLimitMiddleware` to accurately map synchronized API limits across horizontal scaling (e.g. inject Redis scripts).
 
 #### 2. `ClientManager`
 The scale-to-zero `ClientManager` is responsible for observing the configuration and lazily managing downstream MCP connections.
@@ -104,7 +104,7 @@ graph TD
     Proxy -->|記錄活動| Logger(IAuditLogger)
     
     Config -.->|動態限流參數| RL
-    State(IStateStore) -.->|自動儲存分散式狀態| RL
+    State(IRateLimitStore) -.->|自動儲存分散式限流| RL
     
     CM -->|解析機密憑證| Secrets(ISecretStore)
     CM -.->|Scale-to-Zero LRU 資源回收| Downstream1
@@ -119,7 +119,7 @@ graph TD
 - **`IConfigStore`**: 管理代理設定 (包含 AI 金鑰、工具權限、已註冊的 MCP 伺服器)。
 - **`ISecretStore`**: 安全地從 URI 解析機密資訊。例如使用 `keytar://my-secret` 系統級加密。
 - **`IAuditLogger`**: 統一的日誌記錄介面。
-- **`IStateStore`**: 分散式狀態共享儲存區。為 V2 叢集部署的核心，允許 `RateLimitMiddleware` 等中介服務自動把記憶體同步至 Redis 等外部伺服器。
+- **`IRateLimitStore`**: 分散式限流儲存區。為 V2 叢集擴展部署的核心，允許 `RateLimitMiddleware` 中介服務使用 Redis 的原子性實作同步多台 Pod 機器的限流次數。
 
 #### 2. `ClientManager` (客戶端管理器 - Scale-to-Zero)
 V2 的 `ClientManager` 被升級為無狀態資源調度池，動態按需切換 MCP 狀態。
