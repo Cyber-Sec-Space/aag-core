@@ -110,6 +110,38 @@ Plugins are dynamically loaded and allow for per-tenant parameter overrides in S
 }
 ```
 
+### Plugin Development Guide
+
+It is incredibly easy to develop and publish your own plugins. Simply implement the `IPlugin` interface and optionally define `onRequest` / `onResponse` hooks via `ProxyMiddleware`.
+
+```typescript
+import { IPlugin, PluginContext, ProxyMiddleware } from '@cyber-sec.space/aag-core';
+
+class MyCustomMiddleware implements ProxyMiddleware {
+  async onRequest(context, args) {
+    // context.aiId allows you to securely apply SaaS tenant-specific logic
+    console.log(`AI ${context.aiId} is calling ${context.toolName}`);
+    return args;
+  }
+}
+
+const MyCustomPlugin: IPlugin = {
+  name: "my-custom-plugin",
+  version: "1.0.0",
+  register: async (context: PluginContext) => {
+    // 1. Read parameters (combines global fallback options & aiKeys[...].pluginConfig)
+    const options = context.options || {};
+    
+    // 2. Register your interceptors into the engine
+    context.proxyServer.use(new MyCustomMiddleware(options));
+    
+    context.logger.info("MyPlugin", "Successfully injected middleware into AAG!");
+  }
+};
+
+export default MyCustomPlugin; // Remember to export as default
+```
+
 For detailed architectural information, please see [ARCHITECTURE.md](https://github.com/Cyber-Sec-Space/aag-core/blob/main/ARCHITECTURE.md).
 
 ---
@@ -215,6 +247,40 @@ await DataMaskingPlugin.register({ proxyServer: proxy, configStore, logger, opti
     }
   }
 }
+```
+
+### 插件開發指南 (Plugin Development Guide)
+
+開發並發布自訂的外掛非常容易。您只需要實作 `IPlugin` 介面，並選擇性地定義 `onRequest` / `onResponse` 生命週期攔截器 (`ProxyMiddleware`) 即可。
+
+```typescript
+import { IPlugin, PluginContext, ProxyMiddleware } from '@cyber-sec.space/aag-core';
+
+class MyCustomMiddleware implements ProxyMiddleware {
+  constructor(private options: any) {}
+
+  async onRequest(context, args) {
+    // context.aiId 讓您確保邏輯被安全地隔離在獨立的 SaaS 租戶沙盒內
+    console.log(`租戶 ${context.aiId} 正在呼叫 ${context.toolName}`);
+    return args;
+  }
+}
+
+const MyCustomPlugin: IPlugin = {
+  name: "my-custom-plugin",
+  version: "1.0.0",
+  register: async (context: PluginContext) => {
+    // 1. 讀取參數 (此處已經自動合併「全域預設選項」以及「SaaS 專屬 pluginConfig」)
+    const options = context.options || {};
+    
+    // 2. 將攔截器註冊進入代理核心引擎
+    context.proxyServer.use(new MyCustomMiddleware(options));
+    
+    context.logger.info("MyPlugin", "外掛已成功掛載！");
+  }
+};
+
+export default MyCustomPlugin; // 記得透過 default 輸出
 ```
 
 如需詳細的架構資訊，請參見 [ARCHITECTURE.md](https://github.com/Cyber-Sec-Space/aag-core/blob/main/ARCHITECTURE.md)。
