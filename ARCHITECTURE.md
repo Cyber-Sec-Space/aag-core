@@ -24,21 +24,19 @@ graph TD
     subgraph ProxyInternal [ProxySession Core / Tenant-Bound]
         Auth[validateAuth]
         RBAC[isAllowed Check]
-        RL[Rate Limiting]
-        MW[Middleware Interceptors]
+        Plugin[Plugin Ecosystem Interceptors]
     end
     
     Proxy --> Auth
     Auth --> RBAC
-    RBAC --> RL
-    RL --> MW
-    MW --> CM(ClientManager)
+    RBAC --> Plugin
+    Plugin --> CM(ClientManager)
     
     Proxy -->|Reads Tenant Config| Config(IConfigStore)
     Proxy -->|Logs Activities| Logger(IAuditLogger)
     
-    Config -.->|Dynamic Limits| RL
-    State(IRateLimitStore) -.->|Distributed Limits| RL
+    Config -.->|Tenant pluginConfig| Plugin
+    State(IRateLimitStore / etc) -.->|Global Stores| Plugin
     
     CM -->|Resolves Credentials| Secrets(ISecretStore)
     CM -.->|Scale-to-Zero LRU Eviction| Downstream1
@@ -90,21 +88,19 @@ graph TD
     subgraph ProxyInternal [ProxySession 核心邏輯 / 租戶隔離]
         Auth[身分驗證 validateAuth]
         RBAC[權限檢查 isAllowed]
-        RL[流量限制 Rate Limiting]
-        MW[中介軟體攔截器 Middlewares]
+        Plugin[插件生態系攔截器 Plugin Ecosystem]
     end
     
     Proxy --> Auth
     Auth --> RBAC
-    RBAC --> RL
-    RL --> MW
-    MW --> CM(ClientManager)
+    RBAC --> Plugin
+    Plugin --> CM(ClientManager)
 
     Proxy -->|讀取租戶設定| Config(IConfigStore)
     Proxy -->|記錄活動| Logger(IAuditLogger)
     
-    Config -.->|動態限流參數| RL
-    State(IRateLimitStore) -.->|自動儲存分散式限流| RL
+    Config -.->|租戶 pluginConfig| Plugin
+    State(IRateLimitStore / 等) -.->|全域儲存| Plugin
     
     CM -->|解析機密憑證| Secrets(ISecretStore)
     CM -.->|Scale-to-Zero LRU 資源回收| Downstream1
