@@ -389,7 +389,7 @@ describe("ClientManager", () => {
       
       const managed = (clientManager as any).clients.get("catch_test");
       managed.status = "CONNECTED";
-      managed.client = { close: jest.fn().mockRejectedValue(new Error("forced close test error")) };
+      managed.client = { close: jest.fn<any>().mockRejectedValue(new Error("forced close test error")) };
       
       // Hit catch inside triggerReconnect (line 103 in clientManager.ts)
       (clientManager as any).triggerReconnect("catch_test");
@@ -407,7 +407,7 @@ describe("ClientManager", () => {
       const managed = (clientManager as any).clients.get("catch_idle");
       managed.status = "CONNECTED";
       managed.lastAccessed = Date.now() - 500000;
-      managed.client = { close: jest.fn().mockRejectedValue(new Error("idle eviction close error")), ping: jest.fn() };
+      managed.client = { close: jest.fn<any>().mockRejectedValue(new Error("idle eviction close error")), ping: jest.fn() };
       
       // Trigger the Ping Daemon loop over the interval
       await jest.advanceTimersByTimeAsync(30000);
