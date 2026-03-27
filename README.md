@@ -23,6 +23,7 @@ It is designed to be highly modular. By defining strict interfaces (`ISecretStor
 - **Dependency Injection**: Provide your own config managers, secret resolvers (e.g., OS Keychain), and loggers.
 - **Auth Injection**: Safely injects credentials into downstream servers via environment variables, HTTP headers, or request payloads.
 - **High Availability & Keep-Alive**: Automatically tracks downstream health via periodic pings and reconnects with exponential backoff.
+- **Active Session Management**: Built-in `SessionManager` to forcibly close long-lived SSE/Stdio connections upon real-time backend credential revocation.
 - **Middleware Interceptors**: Programmable pipeline to mutate MCP requests/responses, with a built-in `DataMaskingMiddleware` for PII redaction.
 - **In-Memory Rate Limiting**: Built-in `RateLimitMiddleware` employing the Token Bucket algorithm to control request frequency per user/agent. Supports dynamic, per-user limits mapped automatically by sequentially linking `IConfigStore`.
 
@@ -95,6 +96,7 @@ For detailed architectural information, please see [ARCHITECTURE.md](https://git
 - **依賴注入 (Dependency Injection)**: 允許您提供自訂的設定管理器、機密解析器（如作業系統 Keychain）與日誌記錄器。
 - **憑證注入 (Auth Injection)**: 安全地將憑證透過環境變數、HTTP Headers 或請求 Payload 注入到下游伺服器。
 - **高可用性與 Keep-Alive**: 自動追蹤下游健康度並定期 Ping，支援斷線指數退避 (Exponential Backoff) 自動重連。
+- **動態連線中斷 (Session Management)**: 內建 `SessionManager` 可偵測即時的憑證撤銷，並強制剔除對應使用者的現有長時間連線 (SSE/Stdio)。
 - **中介軟體攔截器 (Middlewares)**: 可程式化管線，能在傳輸前後攔截或修改 MCP 請求與回應，並內建 `DataMaskingMiddleware` 用於遮蔽機密個資。
 - **內建限流防護 (Rate Limiting)**: 內建 `RateLimitMiddleware` 採用 Token Bucket 演算法，可針對不同 AI 使用者設定請求頻率限制。支援動態依賴 `IConfigStore` 自動即時套用不同用戶的獨立限流參數。
 

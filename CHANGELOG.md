@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.1] - 2026-03-27
+
+### Added
+- **Dynamic Connection Interruption**: Introduced an active `SessionManager` class that monitors `configChanged` events from `IConfigStore`. It gracefully and forcefully terminates established 'Active SSE Sessions' and underlying Stdio runtimes instantly whenever an administrator revokes an AI identity's credential.
+
 ## [2.0.0] - 2026-03-26
 
 This major release transforms the core engine structurally to natively support clustered Enterprise SaaS deployments, infinite horizontal scalability, and true zero-downtime stateless concurrency without breaking single-machine CLI compatibilities.
