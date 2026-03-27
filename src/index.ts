@@ -12,3 +12,5 @@ export * from "./middleware/types.js";
 export * from "./middleware/dataMasking.js";
 export * from "./middleware/rateLimit.js";
 export * from "./session/SessionManager.js";
+export * from "./interfaces/IPlugin.js";
+export * from "./pluginLoader.js";

@@ -2,6 +2,7 @@ import { ProxyMiddleware, ProxyContext } from "./types.js";
 import { IConfigStore } from "../interfaces/IConfigStore.js";
 import { IRateLimitStore } from "../interfaces/IRateLimitStore.js";
 import { MemoryRateLimitStore } from "../interfaces/MemoryRateLimitStore.js";
+import { IPlugin, PluginContext } from "../interfaces/IPlugin.js";
 
 /**
  * A rate limiter using the Token Bucket algorithm.
@@ -53,3 +54,18 @@ export class RateLimitMiddleware implements ProxyMiddleware {
   }
 }
 
+export const RateLimitPlugin: IPlugin = {
+    name: "aag-core-rate-limit",
+    version: "1.0.0",
+    register: (context: PluginContext) => {
+        const { maxRequests = 600, windowMs = 60000, rateLimitStore } = context.options || {};
+        const middleware = new RateLimitMiddleware(
+            maxRequests,
+            windowMs,
+            context.configStore,
+            rateLimitStore
+        );
+        context.proxyServer.use(middleware);
+        context.logger.info("RateLimitPlugin", "Built-in Rate Limiting plugin registered.");
+    }
+};

@@ -52,7 +52,8 @@ export const AuthKeySchema = z.object({
   rateLimit: z.object({
     rpm: z.number().optional(), // Requests Per Minute
     rph: z.number().optional()  // Requests Per Hour
-  }).optional()
+  }).optional(),
+  pluginConfig: z.record(z.string(), z.any()).optional().default({})
 });
 
 export const SystemConfigSchema = z.object({
@@ -60,9 +61,15 @@ export const SystemConfigSchema = z.object({
   logLevel: z.enum(["INFO", "WARN", "ERROR", "DEBUG"]).default("INFO")
 });
 
+export const PluginConfigSchema = z.object({
+  name: z.string(),
+  options: z.record(z.string(), z.any()).optional().default({})
+});
+
 export const ProxyConfigSchema = z.object({
   masterKey: z.string().optional(),
   system: SystemConfigSchema.optional().default({ port: 3000, logLevel: "INFO" }),
+  plugins: z.array(PluginConfigSchema).optional().default([]),
   mcpServers: z.record(z.string(), McpServerConfigSchema).optional().default({}),
   aiKeys: z.record(z.string(), AuthKeySchema).optional().default({})
 });
@@ -70,3 +77,4 @@ export const ProxyConfigSchema = z.object({
 export type ProxyConfig = z.infer<typeof ProxyConfigSchema>;
 export type SystemConfig = z.infer<typeof SystemConfigSchema>;
 export type AuthKey = z.infer<typeof AuthKeySchema>;
+export type PluginConfig = z.infer<typeof PluginConfigSchema>;

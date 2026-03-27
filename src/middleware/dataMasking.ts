@@ -1,4 +1,5 @@
 import { ProxyMiddleware, ProxyContext } from "./types.js";
+import { IPlugin, PluginContext } from "../interfaces/IPlugin.js";
 
 /**
  * A built-in reference middleware for masking sensitive data leaving the proxy.
@@ -32,3 +33,18 @@ export class DataMaskingMiddleware implements ProxyMiddleware {
         return { ...result, content: maskedContent };
     }
 }
+
+export const DataMaskingPlugin: IPlugin = {
+    name: "aag-core-data-masking",
+    version: "1.0.0",
+    register: (context: PluginContext) => {
+        const { rules = [], maskString = "***" } = context.options || {};
+        if (rules.length > 0) {
+            const middleware = new DataMaskingMiddleware(rules, maskString);
+            context.proxyServer.use(middleware);
+            context.logger.info("DataMaskingPlugin", "Built-in Data Masking plugin registered.");
+        } else {
+            context.logger.debug("DataMaskingPlugin", "DataMaskingPlugin loaded but no rules provided. Middleware will not be active.");
+        }
+    }
+};

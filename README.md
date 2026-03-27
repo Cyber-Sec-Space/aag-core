@@ -24,8 +24,8 @@ It is designed to be highly modular. By defining strict interfaces (`ISecretStor
 - **Auth Injection**: Safely injects credentials into downstream servers via environment variables, HTTP headers, or request payloads.
 - **High Availability & Keep-Alive**: Automatically tracks downstream health via periodic pings and reconnects with exponential backoff.
 - **Active Session Management**: Built-in `SessionManager` to forcibly close long-lived SSE/Stdio connections upon real-time backend credential revocation.
-- **Middleware Interceptors**: Programmable pipeline to mutate MCP requests/responses, with a built-in `DataMaskingMiddleware` for PII redaction.
-- **In-Memory Rate Limiting**: Built-in `RateLimitMiddleware` employing the Token Bucket algorithm to control request frequency per user/agent. Supports dynamic, per-user limits mapped automatically by sequentially linking `IConfigStore`.
+- **Plugin Ecosystem & Middlewares**: Standardized `IPlugin` interface and dynamic `PluginLoader` allowing community developers to seamlessly inject third-party extensions. All plugins natively inherit SaaS tenant isolation and shared `IConfigStore` parameter structures. Built-in `DataMaskingPlugin` provided for PII redaction.
+- **Scale-to-Zero Rate Limiting**: Built-in `RateLimitPlugin` employing the Token Bucket algorithm over an atomic `IRateLimitStore`. Supports dynamic, per-user limits mapped automatically by linking `IConfigStore`.
 
 ### Installation
 
@@ -44,8 +44,11 @@ import {
   IConfigStore, 
   ISecretStore, 
   IAuditLogger,
-  RateLimitMiddleware,
-  DataMaskingMiddleware
+  ISecretStore, 
+  IAuditLogger,
+  PluginLoader,
+  RateLimitPlugin,
+  DataMaskingPlugin
 } from '@cyber-sec.space/aag-core';
 
 // 1. Provide your implementations
@@ -67,10 +70,14 @@ const proxy = new ProxyServer(clientManager, configStore, secretStore, logger, {
   disableEnvFallback: true     // Secure constraint: mandates runtime context for SaaS
 });
 
-// 4. Register built-in or custom Middlewares
-// Rate limits are now continuously pulled from configStore.getConfig().aiKeys[aiId].rateLimit
-proxy.use(new RateLimitMiddleware(100, 60000, configStore)); // Distributed memory mappings configurable via IRateLimitStore
-proxy.use(new DataMaskingMiddleware([/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/gi], "[REDACTED]")); // PII Redaction
+// 4. Register Plugins and dynamic Middlewares
+// Plugins execute with SaaS tenant isolation, automatically referencing respective `pluginConfig` per AI ID
+const pluginLoader = new PluginLoader(logger);
+await pluginLoader.loadPlugins(proxy, configStore, configStore.getConfig()?.plugins || []);
+
+// Or manually register built-in plugins:
+await RateLimitPlugin.register({ proxyServer: proxy, configStore, logger, options: { maxRequests: 100 } });
+await DataMaskingPlugin.register({ proxyServer: proxy, configStore, logger, options: { rules: [/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/gi] } });
 
 // The proxy.server is an MCP Server instance ready to be connected to an incoming transport interface.
 ```
@@ -97,8 +104,8 @@ For detailed architectural information, please see [ARCHITECTURE.md](https://git
 - **憑證注入 (Auth Injection)**: 安全地將憑證透過環境變數、HTTP Headers 或請求 Payload 注入到下游伺服器。
 - **高可用性與 Keep-Alive**: 自動追蹤下游健康度並定期 Ping，支援斷線指數退避 (Exponential Backoff) 自動重連。
 - **動態連線中斷 (Session Management)**: 內建 `SessionManager` 可偵測即時的憑證撤銷，並強制剔除對應使用者的現有長時間連線 (SSE/Stdio)。
-- **中介軟體攔截器 (Middlewares)**: 可程式化管線，能在傳輸前後攔截或修改 MCP 請求與回應，並內建 `DataMaskingMiddleware` 用於遮蔽機密個資。
-- **內建限流防護 (Rate Limiting)**: 內建 `RateLimitMiddleware` 採用 Token Bucket 演算法，可針對不同 AI 使用者設定請求頻率限制。支援動態依賴 `IConfigStore` 自動即時套用不同用戶的獨立限流參數。
+- **全域插件生態系與中介軟體 (Plugins & Middlewares)**: 內建標準化 `IPlugin` 介面與 `PluginLoader`，允許社群開發者輕易掛載第三方擴充套件，且完美繼承 SaaS 中成千上萬的動態租戶配置隔離特性。原生包含可過濾機密個資的 `DataMaskingPlugin`。
+- **動態限流防護 (Rate Limiting)**: 內建 `RateLimitPlugin` 實踐 Token Bucket 演算法，針對不同 AI 使用者設定分級防護。依託 `IRateLimitStore` 提供可靠的跨叢集原子性計數。
 
 ### 安裝方式
 
@@ -117,8 +124,11 @@ import {
   IConfigStore, 
   ISecretStore, 
   IAuditLogger,
-  RateLimitMiddleware,
-  DataMaskingMiddleware
+  ISecretStore, 
+  IAuditLogger,
+  PluginLoader,
+  RateLimitPlugin,
+  DataMaskingPlugin
 } from '@cyber-sec.space/aag-core';
 
 // 1. 提供您的實作
@@ -140,10 +150,13 @@ const proxy = new ProxyServer(clientManager, configStore, secretStore, logger, {
   disableEnvFallback: true     // 強制性安全設定：SaaS 環境下必須透過動態宣告身分
 });
 
-// 4. 註冊內建或自訂的中介軟體 (Middlewares)
-// 會自動讀取 configStore.getConfig().aiKeys[aiId].rateLimit 並由 IRateLimitStore 同步
-proxy.use(new RateLimitMiddleware(100, 60000, configStore)); // 即時分散式記憶體自動限流可透過 IRateLimitStore 同步
-proxy.use(new DataMaskingMiddleware([/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/gi], "[REDACTED]")); // PII 個資自動遮蔽
+// 4. 註冊內建或自訂的插件 (Plugins) 與中介軟體
+const pluginLoader = new PluginLoader(logger);
+await pluginLoader.loadPlugins(proxy, configStore, configStore.getConfig()?.plugins || []);
+
+// 若要手動註冊內建外掛：
+await RateLimitPlugin.register({ proxyServer: proxy, configStore, logger, options: { maxRequests: 100 } });
+await DataMaskingPlugin.register({ proxyServer: proxy, configStore, logger, options: { rules: [/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/gi] } });
 
 // proxy.server 是一個等待接收客戶端請求的 MCP Server 執行個體。
 ```
