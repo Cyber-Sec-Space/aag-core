@@ -11,9 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Plugin Ecosystem**: Introduced `IPlugin` interface and dynamic `PluginLoader`, decoupling `RateLimitMiddleware` and `DataMaskingMiddleware` into standard plugins. This architecture allows administrators to configure extensible third-party community extensions dynamically, perfectly isolating multi-user `pluginConfig` variables per `aiId` without rebuilding the core.
 - **Dynamic Connection Interruption**: Introduced an active `SessionManager` class that monitors `configChanged` events from `IConfigStore`. It gracefully and forcefully terminates established 'Active SSE Sessions' and underlying Stdio runtimes instantly whenever an administrator revokes an AI identity's credential.
 - **Distributed Rate Limiting via `IRateLimitStore`**: Extracted the Token Bucket counter logic out of `RateLimitMiddleware` into an injectable `IRateLimitStore` interface. This allows systems to natively implement distributed storage backends (e.g. Redis evaluation scripts) for perfectly synchronized multi-pod horizontal scaling without race conditions. Also includes a localized `MemoryRateLimitStore` default fallback.
+- **Configurable Downstream Timeouts**: Extracted hardcoded networking proxy daemon variables into `SystemConfigSchema` (`pingIntervalMs`, `pingTimeoutMs`, `idleTimeoutMs`, `reconnectTimeoutMs`).
 
 ### Fixed
 - **Security**: Mitigated a Regular Expression Denial of Service (ReDoS) vulnerability by overriding the transitive dependency `path-to-regexp` to `^8.4.0`.
+- **JIT Connection Pooling Mutex**: Solved a major resource bottleneck by implementing a `connectingPromise` Mutex in `ClientManager`, preventing Serverless/SaaS `getClientJIT` concurrent polling storms.
+- **Error Sandboxing**: Masked downstream `CallTool` errors in `ProxyServer` as 'Internal Gateway Error's to prevent backend infrastructural stack-trace leaks to AI clients.
+- **Memory Token Bucket Thread Safety**: Added asynchronous execution locks to `MemoryRateLimitStore` for robust race-condition immunity.
+- **Session Manager Cleanup Warning**: Documented necessary `SessionManager.unregister()` garbage collection instructions for Host implementors to avoid memory leaks.
 
 ## [2.0.0] - 2026-03-26
 

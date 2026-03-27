@@ -239,7 +239,7 @@ describe("ProxyServer Suite", () => {
             mockGithubClient.callTool.mockRejectedValue(new Error("Downstream execution crash"));
 
             const req = { method: "tools/call", params: { name: "github___search_repositories", arguments: {} } };
-            await expect(callHandler(req, {})).rejects.toThrow("Downstream execution crash");
+            await expect(callHandler(req, {})).rejects.toThrow("Internal Gateway Error: Downstream MCP server");
         });
     });
 

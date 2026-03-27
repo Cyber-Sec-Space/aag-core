@@ -28,6 +28,11 @@ export class SessionManager {
 
     /**
      * Register an active session for an AI_ID.
+     * 
+     * @warning **Memory Leak Prevention**: The returned `unregister` function MUST be invoked 
+     *          when the host transport (e.g. Express Response) naturally closes or errors out.
+     *          Failure to do so will accumulate dangling callbacks infinitely.
+     * 
      * @param aiId The authenticated AI_ID for this session.
      * @param disconnectFn A callback that reliably terminates the session transport/process.
      * @returns A function to unregister the session when it naturally closes.

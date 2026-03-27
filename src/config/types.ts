@@ -58,7 +58,11 @@ export const AuthKeySchema = z.object({
 
 export const SystemConfigSchema = z.object({
   port: z.number().default(3000),
-  logLevel: z.enum(["INFO", "WARN", "ERROR", "DEBUG"]).default("INFO")
+  logLevel: z.enum(["INFO", "WARN", "ERROR", "DEBUG"]).default("INFO"),
+  pingIntervalMs: z.number().optional().default(30000),
+  pingTimeoutMs: z.number().optional().default(5000),
+  idleTimeoutMs: z.number().optional().default(300000),
+  reconnectTimeoutMs: z.number().optional().default(5000)
 });
 
 export const PluginConfigSchema = z.object({
@@ -68,7 +72,14 @@ export const PluginConfigSchema = z.object({
 
 export const ProxyConfigSchema = z.object({
   masterKey: z.string().optional(),
-  system: SystemConfigSchema.optional().default({ port: 3000, logLevel: "INFO" }),
+  system: SystemConfigSchema.optional().default({ 
+    port: 3000, 
+    logLevel: "INFO",
+    pingIntervalMs: 30000,
+    pingTimeoutMs: 5000,
+    idleTimeoutMs: 300000,
+    reconnectTimeoutMs: 5000
+  }),
   plugins: z.array(PluginConfigSchema).optional().default([]),
   mcpServers: z.record(z.string(), McpServerConfigSchema).optional().default({}),
   aiKeys: z.record(z.string(), AuthKeySchema).optional().default({})
