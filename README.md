@@ -11,9 +11,9 @@
 <a id="english"></a>
 ## English
 
-`aag-core` is the core engine for the AI Auth Gateway v2. It provides a robust, protocol-agnostic, **Scale-to-Zero SaaS-oriented** proxy for the Model Context Protocol (MCP), handling infinite downstream JIT connections, authentications, and stateful multi-user routing.
+`aag-core` is the core engine for the AI Auth Gateway v2. It provides a robust, protocol-agnostic, **Scale-to-Zero** proxy for the Model Context Protocol (MCP), handling infinite downstream JIT connections, authentications, and stateful multi-user routing.
 
-It is designed to be highly modular. By defining strict interfaces (`ISecretStore`, `IConfigStore`, `IAuditLogger`), it allows you to inject your own implementations. This makes `aag-core` suitable for both open-source CLI wrappers and fully-featured commercial services.
+It is designed to be highly modular. By defining strict interfaces (`ISecretStore`, `IConfigStore`, `IAuditLogger`), it allows you to inject your own implementations. This makes `aag-core` highly adaptable for various deployment environments.
 
 ### Features
 
@@ -24,7 +24,7 @@ It is designed to be highly modular. By defining strict interfaces (`ISecretStor
 - **Auth Injection**: Safely injects credentials into downstream servers via environment variables, HTTP headers, or request payloads.
 - **High Availability & Keep-Alive**: Automatically tracks downstream health via periodic pings and reconnects with exponential backoff.
 - **Active Session Management**: Built-in `SessionManager` to forcibly close long-lived SSE/Stdio connections upon real-time backend credential revocation.
-- **Plugin Ecosystem & Middlewares**: Standardized `IPlugin` interface and dynamic `PluginLoader` allowing community developers to seamlessly inject third-party extensions. All plugins natively inherit SaaS tenant isolation and shared `IConfigStore` parameter structures. Built-in `DataMaskingPlugin` provided for PII redaction.
+- **Plugin Ecosystem & Middlewares**: Standardized `IPlugin` interface and dynamic `PluginLoader` allowing community developers to seamlessly inject third-party extensions. All plugins natively inherit multi-user isolation and shared `IConfigStore` parameter structures. Built-in `DataMaskingPlugin` provided for PII redaction.
 - **Scale-to-Zero Rate Limiting**: Built-in `RateLimitPlugin` employing the Token Bucket algorithm over an atomic `IRateLimitStore`. Supports dynamic, per-user limits mapped automatically by linking `IConfigStore`.
 
 ### Installation
@@ -64,14 +64,14 @@ const logger = new MyLogger();
 const clientManager = new ClientManager(configStore, secretStore, logger);
 await clientManager.syncConfig(configStore.getConfig());
 
-// 3. Initialize the Stateless Proxy Session for the specific tenant
+// 3. Initialize the Stateless Proxy Session for the specific environment
 const proxy = new ProxyServer(clientManager, configStore, secretStore, logger, {
-  aiId: "your-ai-tenant-uuid", // Optionally binds tenant identity to eliminate process.env fallbacks
-  disableEnvFallback: true     // Secure constraint: mandates runtime context for SaaS
+  aiId: "your-ai-user-uuid",   // Optionally binds identity to eliminate process.env fallbacks
+  disableEnvFallback: true     // Secure constraint: mandates strict runtime context
 });
 
 // 4. Register Plugins and dynamic Middlewares
-// Plugins execute with SaaS tenant isolation, automatically referencing respective `pluginConfig` per AI ID
+// Plugins execute with multi-user isolation, automatically referencing respective `pluginConfig` per AI ID
 const pluginLoader = new PluginLoader(logger);
 await pluginLoader.loadPlugins(proxy, configStore, configStore.getConfig()?.plugins || []);
 
@@ -84,7 +84,7 @@ await DataMaskingPlugin.register({ proxyServer: proxy, configStore, logger, opti
 
 ### Plugin Configuration (JSON Registry)
 
-Plugins are dynamically loaded and allow for per-tenant parameter overrides in SaaS environments. To activate plugins, your configuration object (served by `IConfigStore`) should map them in the global `plugins` array:
+Plugins are dynamically loaded and allow for per-user parameter overrides in multi-user environments. To activate plugins, your configuration object (served by `IConfigStore`) should map them in the global `plugins` array:
 
 ```json
 {
@@ -94,7 +94,7 @@ Plugins are dynamically loaded and allow for per-tenant parameter overrides in S
       "options": { "maxRequests": 1000, "windowMs": 60000 }
     },
     {
-      "name": "./my-custom-local-plugin.js"
+      "name": "./my-custom-plugin.js"
     }
   ],
   "mcpServers": { /* ... */ },
@@ -119,8 +119,8 @@ import { IPlugin, PluginContext, ProxyMiddleware } from '@cyber-sec.space/aag-co
 
 class MyCustomMiddleware implements ProxyMiddleware {
   async onRequest(context, args) {
-    // context.aiId allows you to securely apply SaaS tenant-specific logic
-    console.log(`AI ${context.aiId} is calling ${context.toolName}`);
+    // context.aiId allows you to securely apply user-specific logic
+    console.log(`User ${context.aiId} is calling ${context.toolName}`);
     return args;
   }
 }
@@ -151,9 +151,9 @@ For detailed architectural information, please see [ARCHITECTURE.md](https://git
 
 **版本日誌 (Changelog)** 請參照上方 [Changelog](CHANGELOG.md)。
 
-`aag-core` 是 AI Auth Gateway v2 的核心引擎。它為 Model Context Protocol (MCP) 提供了一個強大、協議無關、**原生支援企業級 SaaS 無狀態化 (Scale-to-Zero)** 的代理層，負責處理成千上萬的下游客戶端連線、身分驗證以及基於租戶權限的請求路由。
+`aag-core` 是 AI Auth Gateway v2 的核心引擎。它為 Model Context Protocol (MCP) 提供了一個強大、協議無關、**原生支援無狀態化 (Scale-to-Zero)** 的代理層，負責處理成千上萬的下游客戶端連線、身分驗證以及基於使用者權限的請求路由。
 
-它的設計高度模組化。透過定義嚴格的介面（`ISecretStore`、`IConfigStore`、`IAuditLogger`、`IRateLimitStore`），您可以注入自己的實作。這使得 `aag-core` 既適用於開源的 CLI 系統，也完美適配於功能高併發的商用服務叢集。
+它的設計高度模組化。透過定義嚴格的介面（`ISecretStore`、`IConfigStore`、`IAuditLogger`、`IRateLimitStore`），您可以注入自己的實作。這使得 `aag-core` 能夠高度適應各種部署環境與規模。
 
 ### 核心功能
 
@@ -164,7 +164,7 @@ For detailed architectural information, please see [ARCHITECTURE.md](https://git
 - **憑證注入 (Auth Injection)**: 安全地將憑證透過環境變數、HTTP Headers 或請求 Payload 注入到下游伺服器。
 - **高可用性與 Keep-Alive**: 自動追蹤下游健康度並定期 Ping，支援斷線指數退避 (Exponential Backoff) 自動重連。
 - **動態連線中斷 (Session Management)**: 內建 `SessionManager` 可偵測即時的憑證撤銷，並強制剔除對應使用者的現有長時間連線 (SSE/Stdio)。
-- **全域插件生態系與中介軟體 (Plugins & Middlewares)**: 內建標準化 `IPlugin` 介面與 `PluginLoader`，允許社群開發者輕易掛載第三方擴充套件，且完美繼承 SaaS 中成千上萬的動態租戶配置隔離特性。原生包含可過濾機密個資的 `DataMaskingPlugin`。
+- **全域插件生態系與中介軟體 (Plugins & Middlewares)**: 內建標準化 `IPlugin` 介面與 `PluginLoader`，允許社群開發者輕易掛載第三方擴充套件，且完美繼承多使用者環境下的動態配置隔離特性。原生包含可過濾機密個資的 `DataMaskingPlugin`。
 - **動態限流防護 (Rate Limiting)**: 內建 `RateLimitPlugin` 實踐 Token Bucket 演算法，針對不同 AI 使用者設定分級防護。依託 `IRateLimitStore` 提供可靠的跨叢集原子性計數。
 
 ### 安裝方式
@@ -204,10 +204,10 @@ const logger = new MyLogger();
 const clientManager = new ClientManager(configStore, secretStore, logger);
 await clientManager.syncConfig(configStore.getConfig());
 
-// 3. 針對特定租戶初始化無狀態的代理會話 (Stateless Proxy Session)
+// 3. 針對特定環境初始化無狀態的代理會話 (Stateless Proxy Session)
 const proxy = new ProxyServer(clientManager, configStore, secretStore, logger, {
-  aiId: "your-ai-tenant-uuid", // 綁定租戶身分，跳過 process.env 等環境全域變數
-  disableEnvFallback: true     // 強制性安全設定：SaaS 環境下必須透過動態宣告身分
+  aiId: "your-ai-user-uuid", // 綁定身分，跳過 process.env 等環境全域變數
+  disableEnvFallback: true   // 強制性安全設定：多使用者環境下必須透過動態宣告身分
 });
 
 // 4. 註冊內建或自訂的插件 (Plugins) 與中介軟體
@@ -223,7 +223,7 @@ await DataMaskingPlugin.register({ proxyServer: proxy, configStore, logger, opti
 
 ### 插件註冊表設定指南 (Plugin Configuration)
 
-在新的生態系架構中，插件採用動態加載。您必須在設定檔 (由 `IConfigStore` 提供) 根目錄的 `plugins` 陣列中宣告它們。如果您身處 SaaS 多租戶環境，您還可以針對每個 `aiId` 分別宣告並覆寫專屬的插件參數 (`pluginConfig`)：
+在新的生態系架構中，插件採用動態加載。您必須在設定檔 (由 `IConfigStore` 提供) 根目錄的 `plugins` 陣列中宣告它們。如果您身處多使用者環境，您還可以針對每個 `aiId` 分別宣告並覆寫專屬的插件參數 (`pluginConfig`)：
 
 ```json
 {
@@ -233,7 +233,7 @@ await DataMaskingPlugin.register({ proxyServer: proxy, configStore, logger, opti
       "options": { "maxRequests": 1000, "windowMs": 60000 }
     },
     {
-      "name": "./my-custom-local-plugin.js"
+      "name": "./my-custom-plugin.js"
     }
   ],
   "mcpServers": { /* ... */ },
@@ -260,8 +260,8 @@ class MyCustomMiddleware implements ProxyMiddleware {
   constructor(private options: any) {}
 
   async onRequest(context, args) {
-    // context.aiId 讓您確保邏輯被安全地隔離在獨立的 SaaS 租戶沙盒內
-    console.log(`租戶 ${context.aiId} 正在呼叫 ${context.toolName}`);
+    // context.aiId 讓您確保邏輯被安全地隔離在獨立的執行環境沙盒內
+    console.log(`使用者 ${context.aiId} 正在呼叫 ${context.toolName}`);
     return args;
   }
 }
@@ -270,7 +270,7 @@ const MyCustomPlugin: IPlugin = {
   name: "my-custom-plugin",
   version: "1.0.0",
   register: async (context: PluginContext) => {
-    // 1. 讀取參數 (此處已經自動合併「全域預設選項」以及「SaaS 專屬 pluginConfig」)
+    // 1. 讀取參數 (此處已經自動合併「全域預設選項」以及「使用者專屬 pluginConfig」)
     const options = context.options || {};
     
     // 2. 將攔截器註冊進入代理核心引擎
