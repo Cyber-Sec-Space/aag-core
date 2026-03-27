@@ -131,7 +131,7 @@ export class ClientManager {
           resolve(undefined);
           this.triggerReconnect(id);
         } finally {
-          if (current) current.connectingPromise = undefined;
+          current.connectingPromise = undefined;
         }
       }, backoffTime);
     });
@@ -255,7 +255,6 @@ export class ClientManager {
             } finally {
                 managed.connectingPromise = undefined;
             }
-            return undefined;
         })();
         return managed.connectingPromise;
     }

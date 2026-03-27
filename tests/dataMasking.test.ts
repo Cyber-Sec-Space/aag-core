@@ -67,4 +67,18 @@ describe("DataMaskingPlugin Suite", () => {
         expect(mockProxy.use).not.toHaveBeenCalled();
         expect(mockLogger.debug).toHaveBeenCalledWith("DataMaskingPlugin", "DataMaskingPlugin loaded but no rules provided. Middleware will not be active.");
     });
+
+    it("should use default mask string and handle undefined options natively", () => {
+        const mockProxy: any = { use: jest.fn() };
+        const mockLogger: any = { debug: jest.fn() };
+
+        DataMaskingPlugin.register({
+            proxyServer: mockProxy,
+            configStore: {} as any,
+            logger: mockLogger,
+            options: undefined
+        } as any);
+
+        expect(mockLogger.debug).toHaveBeenCalledWith("DataMaskingPlugin", "DataMaskingPlugin loaded but no rules provided. Middleware will not be active.");
+    });
 });

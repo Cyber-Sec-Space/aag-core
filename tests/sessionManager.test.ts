@@ -8,7 +8,7 @@ describe("SessionManager", () => {
     let configChangedListener: (config: any) => void;
 
     beforeEach(() => {
-        configStore = new MockConfigStore({ mcpServers: {} });
+        configStore = new MockConfigStore({ mcpServers: {} } as any);
         
         // Spy on the configStore's 'on' method to capture the configChanged listener
         jest.spyOn(configStore, "on").mockImplementation((event: string, listener: any) => {
@@ -138,5 +138,35 @@ describe("SessionManager", () => {
 
         configChangedListener(newConfig);
         expect(disconnect).not.toHaveBeenCalled();
+    });
+
+    it("should completely delete the map entry when the final registered session unregisters naturally", () => {
+        const manager = new SessionManager(configStore, logger);
+        const disconnectFn = jest.fn();
+        const unregister = manager.registerSession("ai-id-final-test", disconnectFn);
+        unregister();
+        expect((manager as any).activeSessions.has("ai-id-final-test")).toBe(false);
+    });
+
+    it("should NOT delete the map entry when one session unregisters but others remain", () => {
+        const manager = new SessionManager(configStore, logger);
+        const disconnectFn1 = jest.fn();
+        const disconnectFn2 = jest.fn();
+        const unregister1 = manager.registerSession("multi-session", disconnectFn1);
+        const unregister2 = manager.registerSession("multi-session", disconnectFn2);
+        
+        unregister1(); 
+        expect((manager as any).activeSessions.has("multi-session")).toBe(true);
+        unregister2(); 
+        expect((manager as any).activeSessions.has("multi-session")).toBe(false);
+    });
+
+    it("should safely handle unregistering a session after disconnectAll has wiped the map natively", () => {
+        const manager = new SessionManager(configStore, logger);
+        const disconnectFn = jest.fn();
+        const unregister = manager.registerSession("ai-id-wiped", disconnectFn);
+        manager.disconnectAll("ai-id-wiped"); 
+        unregister();  
+        expect((manager as any).activeSessions.has("ai-id-wiped")).toBe(false);
     });
 });

@@ -122,5 +122,48 @@ describe("PluginLoader", () => {
 
         fs.unlinkSync(fixturePath);
     });
+
+    it("should load a valid plugin from a commonjs file without default export", async () => {
+        const loader = new PluginLoader(mockLogger);
+        const fixturePath = path.resolve(__dirname, "commonJsPlugin.cjs");
+        fs.writeFileSync(fixturePath, `
+            module.exports = {
+                name: "commonjs-plugin",
+                version: "1.0.0",
+                register: (context) => {
+                    if (context.options) context.options.wasCalled = true;
+                }
+            };
+        `);
+
+        const pluginOptions = { wasCalled: false };
+        await loader.loadPlugins(mockProxyServer, mockConfigStore, [
+            { name: fixturePath, options: pluginOptions }
+        ]);
+
+        expect(pluginOptions.wasCalled).toBe(true);
+        fs.unlinkSync(fixturePath);
+    });
+
+    it("should fallback to returning raw plugin object if default property is explicitly undefined during module evaluation", async () => {
+        const loader = new PluginLoader(mockLogger);
+        const fixturePath = path.resolve(__dirname, "esFallbackPlugin.mjs");
+        fs.writeFileSync(fixturePath, `
+            export default undefined;
+            export const name = "es-fallback";
+            export const version = "1.0.0";
+            export function register(c) { 
+                if (c.options) c.options.wasCalled = true; 
+            }
+        `);
+
+        const pluginOptions = { wasCalled: false };
+        await loader.loadPlugins(mockProxyServer, mockConfigStore, [
+            { name: fixturePath, options: pluginOptions }
+        ]);
+
+        expect(pluginOptions.wasCalled).toBe(true);
+        fs.unlinkSync(fixturePath);
+    });
 });
 
