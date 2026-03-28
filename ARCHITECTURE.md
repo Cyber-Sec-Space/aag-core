@@ -69,6 +69,8 @@ The `ProxyServer` leverages the official `@modelcontextprotocol/sdk` to expose a
 #### 4. Security & Multi-Tenant Constraints
 - **Cross-Tenant State Pollution**: `aag-core` multiplexes tool calls from different users routing to the same downstream MCP server ID through a shared background process to conserve resources. Therefore, **Downstream MCP Servers must be strictly stateless**. If a downstream server maintains state (e.g., chat history, databases) without explicitly verifying the `aiId` inside the tool arguments, Tenant A could potentially access Tenant B's data. If stateful downstream servers are required, SaaS providers must deploy isolated server instances per tenant in the `IConfigStore`.
 - **SSRF via `IConfigStore`**: The `ClientManager` connects to any `url` provided by the Host's configuration. Host applications must strictly sanitize and validate URLs returned by `IConfigStore` to prevent Server-Side Request Forgery (SSRF) attacks against internal VPC networks (e.g., `169.254.169.254`).
+- **Strict Zod Validation**: All Host JSON configurations injected into `syncConfig()` undergo rigorous parsing via `ProxyConfigSchema.parse()`. This guarantees structural integrity and prevents malformed parameters from crashing the multiplexers.
+- **Typed Error Ecosystem**: System exceptions explicitly throw structured `AagError` subclasses (`AuthenticationError`, `UpstreamConnectionError`, `AagConfigurationError`). Host applications can easily `catch` these to reliably determine the precise HTTP response statusCode.
 
 ---
 
@@ -137,3 +139,5 @@ V2 的 `ClientManager` 被升級為無狀態資源調度池，動態按需切換
 #### 4. 資安與多租戶隔離限制 (Security Constraints)
 - **跨租戶狀態污染 (Cross-Tenant State Pollution)**: 為了追求最高效能，`aag-core` 會將指向同一個 MCP 伺服器 ID 的多名使用者請求，多工對接至**同一個下游背景程序**。因此，**下游的 MCP 伺服器必須是絕對無狀態的 (Strictly Stateless)**。如果下游伺服器具有狀態（例如共用 SQLite 或記憶體快取），租戶 A 可能會存取到租戶 B 的資料。如果必須使用有狀態工具，SaaS 營運商應在 `IConfigStore` 中為不同租戶配置獨立的 MCP 伺服器實例。
 - **伺服器端請求偽造 (SSRF)**: `ClientManager` 會無條件連線至 `IConfigStore` 所提供的 `url`。宿主應用程式 (Host Application) 寫入配置前，必須嚴格驗證 URL 格式並實作內部內網 IP 黑名單，以防止攻擊者透過 SSRF 探測內部 VPC 網路（如 AWS `169.254.169.254`）。
+- **嚴格的 Zod 型別驗證 (Zod Schema Validation)**: 所有透過 `syncConfig()` 注入的 Host 設定檔，皆必須通過 `ProxyConfigSchema` 的嚴苛檢驗。這確保了結構的絕對完整性，拒絕任何格式錯誤的設定進入代理管線。
+- **全端型別錯誤生態系 (Typed Error Ecosystem)**: 系統內部徹底揚棄了廣泛的字串錯誤，全面擲出具有語義的 `AagError` 子類（例如 `AuthenticationError`、`UpstreamConnectionError`、`RateLimitExceededError`）。這使得 Host 應用程式在呼叫時，可以直接透過捕捉這類例外來給予前端精確的 HTTP Response 狀態碼。

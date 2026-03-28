@@ -19,7 +19,8 @@ It is designed to be highly modular. By defining strict interfaces (`ISecretStor
 
 - **MCP Proxying**: Intercepts and routes MCP requests (`ListTools`, `CallTool`) seamlessly.
 - **Multi-Transport Support**: Connects to downstream MCP servers via `stdio`, `sse`, or `http`.
-- **Authentication & Authorization**: Validates AI client credentials (`AI_ID`, `AI_KEY`) and enforces fine-grained tool and server permissions with wildcard (`*`) support for allow/deny lists.
+- **Authentication & Authorization**: Validates AI client credentials (`AI_ID`, `AI_KEY`) and enforces fine-grained permissions (Servers, Tools, Prompts, Resources) with wildcard (`*`) support for allow/deny lists.
+- **Strict Zod Validation & Typed Errors**: Boot configurations natively undergo Zod schema enforcement. All system faults are neatly categorized into HTTP-friendly Exception classes (e.g., `AuthenticationError`, `RateLimitExceededError`).
 - **Dependency Injection**: Provide your own config managers, secret resolvers (e.g., OS Keychain), and loggers.
 - **Auth Injection**: Safely injects credentials into downstream servers via environment variables, HTTP headers, or request payloads.
 - **High Availability & Keep-Alive**: Automatically tracks downstream health via periodic pings and reconnects with exponential backoff.
@@ -165,7 +166,8 @@ For detailed architectural information, please see [ARCHITECTURE.md](https://git
 
 - **MCP 代理**: 無縫攔截和路由 MCP 請求（如 `ListTools`、`CallTool`）。
 - **多傳輸協定支援**: 可透過 `stdio`、`sse` 或 `http` 連接到下游的 MCP 伺服器。
-- **身分驗證與授權**: 驗證 AI 客戶端憑證（`AI_ID`、`AI_KEY`），並執行細粒度的工具與伺服器權限控管（允許/拒絕清單，支援萬用字元 `*`）。
+- **身分驗證與授權**: 驗證 AI 客戶端憑證（`AI_ID`、`AI_KEY`），並執行細粒度的伺服器、工具、提示詞 (Prompts) 與資源 (Resources) 權限控管（允許/拒絕清單，支援萬用字元 `*`）。
+- **Zod 嚴格校驗與型別錯誤生態系**: 所有的設定檔在實例化時皆需通過嚴苛的 Zod 架構解析，防堵任何異常屬性注入。同時核心全面採用 `AagError` 型別錯誤類別 (如 `AuthorizationError`)，讓外部 Host App 得以輕鬆擷取並實作 HTTP 狀態碼對映。
 - **依賴注入 (Dependency Injection)**: 允許您提供自訂的設定管理器、機密解析器（如作業系統 Keychain）與日誌記錄器。
 - **憑證注入 (Auth Injection)**: 安全地將憑證透過環境變數、HTTP Headers 或請求 Payload 注入到下游伺服器。
 - **高可用性與 Keep-Alive**: 自動追蹤下游健康度並定期 Ping，支援斷線指數退避 (Exponential Backoff) 自動重連。
