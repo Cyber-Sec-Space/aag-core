@@ -17,13 +17,13 @@ export const StdioServerSchema = z.object({
 
 export const SseServerSchema = z.object({
   transport: z.literal("sse"),
-  url: z.string(),
+  url: z.string().startsWith("http", { message: "URL must begin with http:// or https://" }),
   authInjection: AuthInjectionSchema.optional()
 });
 
 export const HttpServerSchema = z.object({
   transport: z.literal("http"),
-  url: z.string(),
+  url: z.string().startsWith("http", { message: "URL must begin with http:// or https://" }),
   authInjection: AuthInjectionSchema.optional()
 });
 
@@ -54,19 +54,19 @@ export const AuthKeySchema = z.object({
     deniedResources: z.array(z.string()).optional(),
   }).optional(),
   rateLimit: z.object({
-    rpm: z.number().optional(), // Requests Per Minute
-    rph: z.number().optional()  // Requests Per Hour
+    rpm: z.number().int().nonnegative().optional(), // Requests Per Minute
+    rph: z.number().int().nonnegative().optional()  // Requests Per Hour
   }).optional(),
   pluginConfig: z.record(z.string(), z.any()).optional().default({})
 });
 
 export const SystemConfigSchema = z.object({
-  port: z.number().default(3000),
+  port: z.number().int().min(0).max(65535).default(3000),
   logLevel: z.enum(["INFO", "WARN", "ERROR", "DEBUG", "TRACE"]).default("INFO"),
-  pingIntervalMs: z.number().optional().default(30000),
-  pingTimeoutMs: z.number().optional().default(5000),
-  idleTimeoutMs: z.number().optional().default(300000),
-  reconnectTimeoutMs: z.number().optional().default(5000)
+  pingIntervalMs: z.number().int().positive().optional().default(30000),
+  pingTimeoutMs: z.number().int().positive().optional().default(5000),
+  idleTimeoutMs: z.number().int().positive().optional().default(300000),
+  reconnectTimeoutMs: z.number().int().positive().optional().default(5000)
 });
 
 export const PluginConfigSchema = z.object({
