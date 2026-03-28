@@ -51,8 +51,7 @@ import {
   IConfigStore, 
   ISecretStore, 
   IAuditLogger,
-  ISecretStore, 
-  IAuditLogger,
+  IAuthStore,
   PluginLoader,
   RateLimitPlugin,
   DataMaskingPlugin
@@ -62,17 +61,19 @@ import {
 class MyConfigStore implements IConfigStore { /* ... */ }
 class MySecretStore implements ISecretStore { /* ... */ }
 class MyLogger implements IAuditLogger { /* ... */ }
+class MyAuthStore implements IAuthStore { /* ... */ } // Optional, defaults to ConfigAuthStore
 
 const configStore = new MyConfigStore();
 const secretStore = new MySecretStore();
 const logger = new MyLogger();
+const authStore = new MyAuthStore();
 
 // 2. Initialize the Downstream Client Manager
 const clientManager = new ClientManager(configStore, secretStore, logger);
 await clientManager.syncConfig(configStore.getConfig());
 
 // 3. Initialize the Stateless Proxy Session for the specific environment
-const proxy = new ProxyServer(clientManager, configStore, secretStore, logger, {
+const proxy = new ProxyServer(clientManager, configStore, secretStore, authStore, logger, {
   aiId: "your-ai-user-uuid",   // Optionally binds identity to eliminate process.env fallbacks
   disableEnvFallback: true     // Secure constraint: mandates strict runtime context
 });
@@ -198,8 +199,7 @@ import {
   IConfigStore, 
   ISecretStore, 
   IAuditLogger,
-  ISecretStore, 
-  IAuditLogger,
+  IAuthStore,
   PluginLoader,
   RateLimitPlugin,
   DataMaskingPlugin
@@ -209,17 +209,19 @@ import {
 class MyConfigStore implements IConfigStore { /* ... */ }
 class MySecretStore implements ISecretStore { /* ... */ }
 class MyLogger implements IAuditLogger { /* ... */ }
+class MyAuthStore implements IAuthStore { /* ... */ } // 非必填，預設提供 ConfigAuthStore 退路
 
 const configStore = new MyConfigStore();
 const secretStore = new MySecretStore();
 const logger = new MyLogger();
+const authStore = new MyAuthStore();
 
 // 2. 初始化下游客戶端管理器
 const clientManager = new ClientManager(configStore, secretStore, logger);
 await clientManager.syncConfig(configStore.getConfig());
 
 // 3. 針對特定環境初始化無狀態的代理會話 (Stateless Proxy Session)
-const proxy = new ProxyServer(clientManager, configStore, secretStore, logger, {
+const proxy = new ProxyServer(clientManager, configStore, secretStore, authStore, logger, {
   aiId: "your-ai-user-uuid", // 綁定身分，跳過 process.env 等環境全域變數
   disableEnvFallback: true   // 強制性安全設定：多使用者環境下必須透過動態宣告身分
 });

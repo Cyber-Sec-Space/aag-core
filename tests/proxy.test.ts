@@ -2,6 +2,7 @@ import { jest } from "@jest/globals";
 import { ProxyServer } from "../src/proxy.js";
 import { ClientManager } from "../src/clientManager.js";
 import { MockConfigStore, MockSecretStore, MockLogger } from "./mocks.js";
+import { ConfigAuthStore } from "../src/auth/ConfigAuthStore.js";
 import { RateLimitMiddleware } from "../src/middleware/rateLimit.js";
 import { AagError } from "../src/errors.js";
 
@@ -55,6 +56,7 @@ describe("ProxyServer Suite", () => {
             clientManager,
             configStore,
             new MockSecretStore(),
+            new ConfigAuthStore(configStore),
             new MockLogger()
         );
     });
@@ -67,7 +69,7 @@ describe("ProxyServer Suite", () => {
     });
 
     it("should respect disableEnvFallback option directly targeting pure unauthenticated sessions", async () => {
-        const strictProxy = new ProxyServer(clientManager, configStore, new MockSecretStore(), new MockLogger(), { disableEnvFallback: true });
+        const strictProxy = new ProxyServer(clientManager, configStore, new MockSecretStore(), new ConfigAuthStore(configStore), new MockLogger(), { disableEnvFallback: true });
         const handlers = (strictProxy.server as any)._requestHandlers;
         const callHandler = handlers.get("tools/call");
 
@@ -76,12 +78,12 @@ describe("ProxyServer Suite", () => {
     });
 
     it("should instantiate safely without optional bindings", () => {
-        const defaultProxy = new ProxyServer(clientManager, configStore, new MockSecretStore(), new MockLogger(), {});
+        const defaultProxy = new ProxyServer(clientManager, configStore, new MockSecretStore(), new ConfigAuthStore(configStore), new MockLogger(), {});
         expect(defaultProxy).toBeDefined();
     });
 
     it("should instantiate securely with pre-authenticated aiId bound natively", () => {
-        const strictProxy = new ProxyServer(clientManager, configStore, new MockSecretStore(), new MockLogger(), { aiId: "saas-tenant" });
+        const strictProxy = new ProxyServer(clientManager, configStore, new MockSecretStore(), new ConfigAuthStore(configStore), new MockLogger(), { aiId: "saas-tenant" });
         expect(strictProxy).toBeDefined();
     });
 
@@ -95,44 +97,52 @@ describe("ProxyServer Suite", () => {
             expect(err.status).toBe(500);
         });
 
-        it("should catch Zod schema validation errors directly throwing AagConfigurationError safely", () => {
-            configStore.getConfig().mcpServers["github"] = { transport: "stdio", command: 123 as any } as any;
-            expect(() => proxy.validateAuth({}, {})).toThrow("Proxy Configuration Schema is malformed or invalid.");
-        });
-
-        it("should validate auth dynamically from environment", () => {
+        it("should validate auth dynamically from environment", async () => {
             const validateAuth = proxy.validateAuth.bind(proxy);
-            const aiid = validateAuth({}, {});
-            expect(aiid).toBe("test-ai");
+            const auth = await validateAuth({}, {});
+            expect(auth.key).toBe("secret");
         });
 
-        it("should reject if environment lacks credentials", () => {
+        it("should reject if environment lacks credentials", async () => {
             delete process.env.AI_ID;
             const validateAuth = proxy.validateAuth.bind(proxy);
-            expect(() => validateAuth({}, {})).toThrow("Authentication required: Please provide AI_ID and AI_KEY in environment variables.");
+            await expect(validateAuth({}, {})).rejects.toThrow("Authentication required: Please provide AI_ID and AI_KEY in environment variables.");
         });
 
-        it("should reject if key is revoked", () => {
+        it("should reject if key is revoked", async () => {
             configStore.getConfig().aiKeys["test-ai"].revoked = true;
             const validateAuth = proxy.validateAuth.bind(proxy);
-            expect(() => validateAuth({}, {})).toThrow("Key for AI ID 'test-ai' has been revoked.");
+            await expect(validateAuth({}, {})).rejects.toThrow("Key for AI ID 'test-ai' has been revoked.");
         });
 
-        it("should reject if token is invalid", () => {
+        it("should reject if token is invalid", async () => {
             process.env.AI_KEY = "wrong";
             const validateAuth = proxy.validateAuth.bind(proxy);
-            expect(() => validateAuth({}, {})).toThrow("Invalid Key for AI ID 'test-ai' provided in environment.");
+            await expect(validateAuth({}, {})).rejects.toThrow("Invalid Key for AI ID 'test-ai' provided in environment.");
         });
 
-        it("should throw if aiKeys configurations missing natively in store", () => {
+        it("should throw if aiKeys configurations missing natively in store", async () => {
             configStore = new MockConfigStore({} as any);
-            proxy = new ProxyServer(clientManager, configStore, new MockSecretStore(), new MockLogger());
-            expect(() => proxy.validateAuth({}, {})).toThrow("No AI keys configured in proxy.");
+            proxy = new ProxyServer(clientManager, configStore, new MockSecretStore(), new ConfigAuthStore(configStore), new MockLogger());
+            await expect(proxy.validateAuth({}, {})).rejects.toThrow("Invalid AIID from environment: test-ai");
         });
 
-        it("should throw if the environment ID maps to a missing AI ID key config natively", () => {
+        it("should throw if the environment ID maps to a missing AI ID key config natively", async () => {
             process.env.AI_ID = "nonexistent-ai";
-            expect(() => proxy.validateAuth({}, {})).toThrow("Invalid AIID from environment: nonexistent-ai");
+            await expect(proxy.validateAuth({}, {})).rejects.toThrow("Invalid AIID from environment: nonexistent-ai");
+        });
+
+        it("should reject pre-authenticated sessions if matching identity is not found natively", async () => {
+            const strictProxy = new ProxyServer(clientManager, configStore, new MockSecretStore(), new ConfigAuthStore(configStore), new MockLogger(), { aiId: "nonexistent-tenant" });
+            const validateAuth = strictProxy['validateAuth'].bind(strictProxy);
+            await expect(validateAuth({}, {})).rejects.toThrow("Session constructed with bound AI ID 'nonexistent-tenant' but no matching identity profile found.");
+        });
+
+        it("should reject pre-authenticated sessions if matching identity is revoked natively", async () => {
+            configStore.getConfig().aiKeys["revoked-tenant"] = { key: "secret", revoked: true } as any;
+            const strictProxy = new ProxyServer(clientManager, configStore, new MockSecretStore(), new ConfigAuthStore(configStore), new MockLogger(), { aiId: "revoked-tenant" });
+            const validateAuth = strictProxy['validateAuth'].bind(strictProxy);
+            await expect(validateAuth({}, {})).rejects.toThrow("Key for AI ID 'revoked-tenant' has been revoked.");
         });
     });
 
@@ -170,7 +180,7 @@ describe("ProxyServer Suite", () => {
             proxy.authenticatedAiId = "test-ai";
             const original = configStore.getConfig().aiKeys["test-ai"].permissions;
             configStore.getConfig().aiKeys["test-ai"].permissions = { allowedServers: [], allowedTools: [] };
-            expect((proxy as any).isAllowed("github", "search_repositories")).toBe(true);
+            expect((proxy as any).isAllowed(configStore.getConfig().aiKeys["test-ai"], "github", "search_repositories")).toBe(true);
             configStore.getConfig().aiKeys["test-ai"].permissions = original;
         });
 
@@ -178,7 +188,7 @@ describe("ProxyServer Suite", () => {
             proxy.authenticatedAiId = "test-ai";
             const original = configStore.getConfig().aiKeys["test-ai"].permissions;
             configStore.getConfig().aiKeys["test-ai"].permissions = undefined;
-            expect((proxy as any).isAllowed("github", "search_repositories")).toBe(true);
+            expect((proxy as any).isAllowed(configStore.getConfig().aiKeys["test-ai"], "github", "search_repositories")).toBe(true);
             configStore.getConfig().aiKeys["test-ai"].permissions = original;
         });
 
@@ -186,30 +196,30 @@ describe("ProxyServer Suite", () => {
             proxy.authenticatedAiId = "test-ai";
             const original = configStore.getConfig().aiKeys["test-ai"].permissions;
             configStore.getConfig().aiKeys["test-ai"].permissions = { allowedServers: ["*"], allowedTools: ["*"] };
-            expect((proxy as any).isAllowed("github", "search_repositories")).toBe(true);
+            expect((proxy as any).isAllowed(configStore.getConfig().aiKeys["test-ai"], "github", "search_repositories")).toBe(true);
             configStore.getConfig().aiKeys["test-ai"].permissions = original;
         });
 
         it("should return false if authenticatedAiId is missing natively", () => {
             proxy.authenticatedAiId = undefined;
-            expect((proxy as any).isAllowed("github", "tool")).toBe(false);
+            expect((proxy as any).isAllowed({}, "github", "tool")).toBe(false);
         });
 
-        it("should return false if auth config is missing for authId", () => {
-            proxy.authenticatedAiId = "non-existent";
-            expect((proxy as any).isAllowed("github", "tool")).toBe(false);
+        it("should return true if auth config implicitly lacks permissions when tested", () => {
+            proxy.authenticatedAiId = "test-ai";
+            expect((proxy as any).isAllowed({}, "github", "tool")).toBe(true);
         });
 
         it("should return false if denied list strictly matches", () => {
             proxy.authenticatedAiId = "test-ai";
-            expect((proxy as any).isAllowed("github", "search_users")).toBe(false);
+            expect((proxy as any).isAllowed(configStore.getConfig().aiKeys["test-ai"], "github", "search_users")).toBe(false);
         });
 
         it("should return false if deniedServers strictly matches", () => {
             proxy.authenticatedAiId = "test-ai";
             const original = configStore.getConfig().aiKeys["test-ai"].permissions;
             configStore.getConfig().aiKeys["test-ai"].permissions = { deniedServers: ["github"] };
-            expect((proxy as any).isAllowed("github", "search_repositories")).toBe(false);
+            expect((proxy as any).isAllowed(configStore.getConfig().aiKeys["test-ai"], "github", "search_repositories")).toBe(false);
             configStore.getConfig().aiKeys["test-ai"].permissions = original;
         });
 

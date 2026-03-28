@@ -7,9 +7,10 @@ import {
 import { ClientManager } from "./clientManager.js";
 import { IConfigStore } from "./interfaces/IConfigStore.js";
 import { ISecretStore } from "./interfaces/ISecretStore.js";
+import { IAuthStore } from "./interfaces/IAuthStore.js";
 import { IAuditLogger } from "./interfaces/IAuditLogger.js";
 import { ProxyMiddleware, ProxyContext } from "./middleware/types.js";
-import { ProxyConfigSchema } from "./config/types.js";
+import { AuthKey } from "./config/types.js";
 import { 
   AagConfigurationError, 
   AuthenticationError, 
@@ -27,6 +28,7 @@ export class ProxyServer {
   private clientManager: ClientManager;
   private configStore: IConfigStore;
   private secretStore: ISecretStore;
+  private authStore: IAuthStore;
   private logger: IAuditLogger;
   private authenticatedAiId: string | null = null;
   private disableEnvFallback: boolean = false;
@@ -36,12 +38,14 @@ export class ProxyServer {
       clientManager: ClientManager, 
       configStore: IConfigStore, 
       secretStore: ISecretStore, 
+      authStore: IAuthStore,
       logger: IAuditLogger,
       options?: ProxySessionOptions
   ) {
     this.clientManager = clientManager;
     this.configStore = configStore;
     this.secretStore = secretStore;
+    this.authStore = authStore;
     this.logger = logger;
 
     if (options?.aiId) {
@@ -64,9 +68,16 @@ export class ProxyServer {
       this.logger.info("Proxy", "Registered custom ProxyMiddleware interceptor.");
   }
 
-  private validateAuth(request: any, extra?: any) {
+  private async validateAuth(request: any, extra?: any): Promise<AuthKey> {
     if (this.authenticatedAiId) {
-       return this.authenticatedAiId;
+        const auth = await this.authStore.getIdentity(this.authenticatedAiId);
+        if (!auth) {
+            throw new AuthenticationError(`Session constructed with bound AI ID '${this.authenticatedAiId}' but no matching identity profile found.`);
+        }
+        if (auth.revoked) {
+            throw new AuthenticationError(`Key for AI ID '${this.authenticatedAiId}' has been revoked.`);
+        }
+        return auth;
     }
 
     if (this.disableEnvFallback) {
@@ -82,38 +93,26 @@ export class ProxyServer {
       throw new AuthenticationError("Authentication required: Please provide AI_ID and AI_KEY in environment variables.");
     }
 
-    let config;
-    try {
-        config = ProxyConfigSchema.parse(this.configStore.getConfig());
-    } catch (e: any) {
-        this.logger.error("Proxy", `Configuration schema validation failed: ${e.message}`);
-        throw new AagConfigurationError("Proxy Configuration Schema is malformed or invalid.", e.errors);
-    }
-    
-    if (!config?.aiKeys || Object.keys(config.aiKeys).length === 0) {
-       this.logger.error("Proxy", "Authentication failed: No AI keys configured in proxy.");
-       throw new AagConfigurationError("No AI keys configured in proxy.");
-    }
+    const auth = await this.authStore.getIdentity(aiid);
 
-    const keyEntry = config.aiKeys[aiid];
-    if (!keyEntry) {
+    if (!auth) {
       this.logger.warn("Proxy", `Authentication failed: Invalid AIID '${aiid}'`);
       throw new AuthenticationError(`Invalid AIID from environment: ${aiid}`);
     }
 
-    if (keyEntry.revoked) {
+    if (auth.revoked) {
       this.logger.warn("Proxy", `Authentication failed: AI ID '${aiid}' is revoked`);
       throw new AuthenticationError(`Key for AI ID '${aiid}' has been revoked.`);
     }
 
-    if (keyEntry.key !== key) {
+    if (auth.key !== key) {
       this.logger.warn("Proxy", `Authentication failed: Invalid key provided for AI ID '${aiid}'`);
       throw new AuthenticationError(`Invalid Key for AI ID '${aiid}' provided in environment.`);
     }
     
     this.authenticatedAiId = aiid;
     this.logger.info("Auth", `AI ID '${aiid}' authenticated successfully`);
-    return aiid;
+    return auth;
   }
 
   private matchPattern(value: string, pattern: string): boolean {
@@ -123,13 +122,8 @@ export class ProxyServer {
     return new RegExp(regexPattern).test(value);
   }
 
-  private isAllowed(serverId: string, toolName: string): boolean {
+  private isAllowed(auth: AuthKey, serverId: string, toolName: string): boolean {
     if (!this.authenticatedAiId) return false;
-    
-    const config = this.configStore.getConfig();
-    const auth = config?.aiKeys?.[this.authenticatedAiId];
-    if (!auth) return false;
-
     if (!auth.permissions) return true;
 
     const { allowedServers, deniedServers, allowedTools, deniedTools } = auth.permissions;
@@ -155,7 +149,7 @@ export class ProxyServer {
 
   private setupRequestHandlers() {
     this.server.setRequestHandler(ListToolsRequestSchema, async (request, extra) => {
-      this.validateAuth(request, extra);
+      const auth = await this.validateAuth(request, extra);
       const allTools: Tool[] = [];
       const clients = await this.clientManager.getClientsJIT();
 
@@ -163,7 +157,7 @@ export class ProxyServer {
         try {
           const response = await client.listTools();
           const prefixedTools = response.tools
-            .filter(tool => this.isAllowed(serverId, tool.name))
+            .filter(tool => this.isAllowed(auth, serverId, tool.name))
             .map((tool) => ({
               ...tool,
               name: `${serverId}___${tool.name}`
@@ -179,7 +173,7 @@ export class ProxyServer {
     });
 
     this.server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
-      this.validateAuth(request, extra);
+      const auth = await this.validateAuth(request, extra);
       const requestedName = request.params.name;
       this.logger.info("Activity", `AI ID '${this.authenticatedAiId}' calling tool: ${requestedName}`);
       
@@ -201,7 +195,7 @@ export class ProxyServer {
         throw new AagConfigurationError(`Tool ${requestedName} fully qualified server not found`);
       }
 
-      if (!this.isAllowed(targetServerId, actualToolName)) {
+      if (!this.isAllowed(auth, targetServerId, actualToolName)) {
         this.logger.warn("Security", `Access Denied: AI ID '${this.authenticatedAiId}' attempted to use unauthorized tool '${requestedName}'`);
         throw new AuthorizationError(`Permission denied: AI ID '${this.authenticatedAiId}' is not allowed to use tool '${requestedName}'.`);
       }

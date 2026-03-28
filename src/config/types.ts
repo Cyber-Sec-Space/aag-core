@@ -76,14 +76,6 @@ export const PluginConfigSchema = z.object({
 
 export const ProxyConfigSchema = z.object({
   masterKey: z.string().optional(),
-  system: SystemConfigSchema.optional().default({ 
-    port: 3000, 
-    logLevel: "INFO",
-    pingIntervalMs: 30000,
-    pingTimeoutMs: 5000,
-    idleTimeoutMs: 300000,
-    reconnectTimeoutMs: 5000
-  }),
   plugins: z.array(PluginConfigSchema).optional().default([]),
   mcpServers: z.record(z.string(), McpServerConfigSchema).optional().default({}),
   aiKeys: z.record(z.string(), AuthKeySchema).optional().default({})

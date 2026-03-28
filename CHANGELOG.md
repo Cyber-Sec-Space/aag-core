@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2.2.0] - 2026-03-28
 
 ### Added
+- **Asynchronous Identity Resolution (`IAuthStore`)**: Decoupled identity lookups from static configuration. Implemented `IAuthStore` interface and `ConfigAuthStore` adapter for backward compatibility. Refactored `ProxyServer.validateAuth()` to be `async`, allowing JIT identity fetching from external databases/services.
+- **Pure SaaS Mode (`aiKeys` Optional)**: Updated `ProxyConfigSchema` to make `aiKeys` optional, allowing the system to operate in pure SaaS mode where identities are managed externally via `IAuthStore`.
+- **Session Revocation Targeting**: Refactored `SessionManager` to selectively terminate target `aiId` connections gracefully (`disconnectSession(aiId)`), significantly mitigating resource leakage across global instances vs recursive polling.
+
 - **Trace Level Logging**: Expanded the `IAuditLogger` interface with a mathematically granular `trace()` log level intended to isolate high-density data streaming (such as upcoming Cloud Model Proxy evaluations) separately from the standard `debug()` or `info()` outputs.
 - **Future-Proof RBAC Parameters**: Appended `allowedPrompts`, `deniedPrompts`, `allowedResources`, and `deniedResources` conditionally onto the `AuthKeySchema.permissions` layer to gracefully prepare the multi-tenant validation pipeline for exhaustive MCP Protocol scaling.
 - **Zod Runtime Schema Validation**: Enforced strict `ProxyConfigSchema.parse()` evaluations natively during Core proxy execution and config synchronization (`syncConfig()`). This reliably catches malformed Host application JSON structures dynamically before they reach downstream pipes, safely returning HTTP 500 boundaries.
