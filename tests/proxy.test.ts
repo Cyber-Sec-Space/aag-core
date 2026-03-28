@@ -29,6 +29,8 @@ describe("ProxyServer Suite", () => {
             mcpServers: {
                 "github": {
                     transport: "stdio",
+                    command: "npx",
+                    args: ["-y", "@modelcontextprotocol/server-github"],
                     authInjection: { type: "payload", key: "token", value: "githubToken" }
                 }
             }
@@ -284,7 +286,7 @@ describe("ProxyServer Suite", () => {
         it("should iterate and skip non-matching servers during callTool extraction", async () => {
             const handlers = (proxy.server as any)._requestHandlers;
             const callHandler = handlers.get("tools/call");
-            configStore.getConfig().mcpServers["dummy"] = { transport: "stdio", command: "echo" } as any;
+            configStore.getConfig().mcpServers["dummy"] = { transport: "stdio", command: "echo", args: [] } as any;
             
             const req = { method: "tools/call", params: { name: "github___search_repositories", arguments: {} } };
             const result = await callHandler(req, {});
@@ -295,7 +297,7 @@ describe("ProxyServer Suite", () => {
             const handlers = (proxy.server as any)._requestHandlers;
             const callHandler = handlers.get("tools/call");
             
-            configStore.getConfig().mcpServers = { "dummy": {}, "another": {} } as any; 
+            configStore.getConfig().mcpServers = { "dummy": { transport: "stdio", command: "ls" }, "another": { transport: "http", url: "http://test" } } as any; 
             
             const req = { method: "tools/call", params: { name: "github___search_repositories", arguments: {} } }; 
             await expect(callHandler(req, {})).rejects.toThrow("fully qualified server not found");

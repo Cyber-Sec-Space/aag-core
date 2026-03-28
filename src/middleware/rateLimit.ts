@@ -1,6 +1,7 @@
 import { ProxyMiddleware, ProxyContext } from "./types.js";
 import { IConfigStore } from "../interfaces/IConfigStore.js";
 import { IRateLimitStore } from "../interfaces/IRateLimitStore.js";
+import { RateLimitExceededError } from "../errors.js";
 import { MemoryRateLimitStore } from "../interfaces/MemoryRateLimitStore.js";
 import { IPlugin, PluginContext } from "../interfaces/IPlugin.js";
 
@@ -49,7 +50,7 @@ export class RateLimitMiddleware implements ProxyMiddleware {
     if (permitted) {
       return args;
     } else {
-      throw new Error(`Rate limit exceeded for AI ID '${context.aiId}'. Please try again later.`);
+      throw new RateLimitExceededError(`Rate limit exceeded for AI ID '${context.aiId}'. Please try again later.`);
     }
   }
 }

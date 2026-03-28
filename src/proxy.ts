@@ -9,6 +9,13 @@ import { IConfigStore } from "./interfaces/IConfigStore.js";
 import { ISecretStore } from "./interfaces/ISecretStore.js";
 import { IAuditLogger } from "./interfaces/IAuditLogger.js";
 import { ProxyMiddleware, ProxyContext } from "./middleware/types.js";
+import { ProxyConfigSchema } from "./config/types.js";
+import { 
+  AagConfigurationError, 
+  AuthenticationError, 
+  AuthorizationError, 
+  UpstreamConnectionError 
+} from "./errors.js";
 
 export interface ProxySessionOptions {
   aiId?: string; // Pre-authenticated identity for multi-tenant SaaS scaling
@@ -64,7 +71,7 @@ export class ProxyServer {
 
     if (this.disableEnvFallback) {
          this.logger.error("Proxy", "Authentication failed: No AI ID injected and environment fallback disabled.");
-         throw new Error("Authentication required: No AI ID context provided for this session.");
+         throw new AuthenticationError("Authentication required: No AI ID context provided for this session.");
     }
 
     const aiid = process.env.AI_ID;
@@ -72,29 +79,36 @@ export class ProxyServer {
 
     if (!aiid || !key) {
       this.logger.warn("Proxy", "Authentication failed: Missing AI_ID or AI_KEY in environment.");
-      throw new Error("Authentication required: Please provide AI_ID and AI_KEY in environment variables.");
+      throw new AuthenticationError("Authentication required: Please provide AI_ID and AI_KEY in environment variables.");
     }
 
-    const config = this.configStore.getConfig();
-    if (!config?.aiKeys) {
+    let config;
+    try {
+        config = ProxyConfigSchema.parse(this.configStore.getConfig());
+    } catch (e: any) {
+        this.logger.error("Proxy", `Configuration schema validation failed: ${e.message}`);
+        throw new AagConfigurationError("Proxy Configuration Schema is malformed or invalid.", e.errors);
+    }
+    
+    if (!config?.aiKeys || Object.keys(config.aiKeys).length === 0) {
        this.logger.error("Proxy", "Authentication failed: No AI keys configured in proxy.");
-       throw new Error("No AI keys configured in proxy.");
+       throw new AagConfigurationError("No AI keys configured in proxy.");
     }
 
     const keyEntry = config.aiKeys[aiid];
     if (!keyEntry) {
       this.logger.warn("Proxy", `Authentication failed: Invalid AIID '${aiid}'`);
-      throw new Error(`Invalid AIID from environment: ${aiid}`);
+      throw new AuthenticationError(`Invalid AIID from environment: ${aiid}`);
     }
 
     if (keyEntry.revoked) {
       this.logger.warn("Proxy", `Authentication failed: AI ID '${aiid}' is revoked`);
-      throw new Error(`Key for AI ID '${aiid}' has been revoked.`);
+      throw new AuthenticationError(`Key for AI ID '${aiid}' has been revoked.`);
     }
 
     if (keyEntry.key !== key) {
       this.logger.warn("Proxy", `Authentication failed: Invalid key provided for AI ID '${aiid}'`);
-      throw new Error(`Invalid Key for AI ID '${aiid}' provided in environment.`);
+      throw new AuthenticationError(`Invalid Key for AI ID '${aiid}' provided in environment.`);
     }
     
     this.authenticatedAiId = aiid;
@@ -184,24 +198,24 @@ export class ProxyServer {
 
       if (!targetServerId || !actualToolName) {
         this.logger.warn("Proxy", `Tool not found: ${requestedName}`);
-        throw new Error(`Tool ${requestedName} fully qualified server not found`);
+        throw new AagConfigurationError(`Tool ${requestedName} fully qualified server not found`);
       }
 
       if (!this.isAllowed(targetServerId, actualToolName)) {
         this.logger.warn("Security", `Access Denied: AI ID '${this.authenticatedAiId}' attempted to use unauthorized tool '${requestedName}'`);
-        throw new Error(`Permission denied: AI ID '${this.authenticatedAiId}' is not allowed to use tool '${requestedName}'.`);
+        throw new AuthorizationError(`Permission denied: AI ID '${this.authenticatedAiId}' is not allowed to use tool '${requestedName}'.`);
       }
 
-      const config = this.configStore.getConfig()?.mcpServers[targetServerId] as any;
+      const config = this.configStore.getConfig()?.mcpServers?.[targetServerId] as any;
       if (!config) {
-        throw new Error(`Config for ${targetServerId} not found`);
+        throw new AagConfigurationError(`Config for ${targetServerId} not found`);
       }
 
       // JIT Connection Wake-Up
       const client = await this.clientManager.getClientJIT(targetServerId);
       if (!client) {
         this.logger.error("Proxy", `Downstream client ${targetServerId} could not be connected JIT.`);
-        throw new Error(`Client ${targetServerId} is disconnected and failed to wake up.`);
+        throw new UpstreamConnectionError(`Client ${targetServerId} is disconnected and failed to wake up.`);
       }
 
       let args = { ...(request.params.arguments || {}) } as any;
@@ -234,7 +248,7 @@ export class ProxyServer {
         return result;
       } catch (e: any) {
         this.logger.error("Proxy", `Error calling ${actualToolName} on ${targetServerId}: ${e.message}`);
-        throw new Error(`Internal Gateway Error: Downstream MCP server '${targetServerId}' encountered a failure.`);
+        throw new UpstreamConnectionError(`Internal Gateway Error: Downstream MCP server '${targetServerId}' encountered a failure.`);
       }
     });
   }

@@ -6,6 +6,8 @@ import { ProxyConfig, McpServerConfig, McpStdioConfig, McpSseConfig, McpHttpConf
 import { IConfigStore } from "./interfaces/IConfigStore.js";
 import { ISecretStore } from "./interfaces/ISecretStore.js";
 import { IAuditLogger } from "./interfaces/IAuditLogger.js";
+import { ProxyConfigSchema } from "./config/types.js";
+import { UpstreamConnectionError, AagConfigurationError } from "./errors.js";
 
 export type ClientStatus = "CONNECTED" | "RECONNECTING" | "DISCONNECTED" | "DISCONNECTED_IDLE";
 
@@ -76,8 +78,16 @@ export class ClientManager {
   }
 
   public async syncConfig(config: ProxyConfig) {
+    let parsedConfig: ProxyConfig;
+    try {
+        parsedConfig = ProxyConfigSchema.parse(config);
+    } catch (e: any) {
+        this.logger.error("ClientManager", `Configuration schema invalid during sync: ${e.message}`);
+        throw new AagConfigurationError("Proxy Configuration Schema is invalid during syncConfig", e.errors);
+    }
+    
     const currentServerIds = new Set(this.clients.keys());
-    const newServerIds = new Set(Object.keys(config.mcpServers));
+    const newServerIds = new Set(Object.keys(parsedConfig.mcpServers));
 
     for (const id of currentServerIds) {
       if (!newServerIds.has(id)) {
@@ -85,7 +95,7 @@ export class ClientManager {
       }
     }
 
-    for (const [id, serverConfig] of Object.entries(config.mcpServers)) {
+    for (const [id, serverConfig] of Object.entries(parsedConfig.mcpServers)) {
       if (currentServerIds.has(id)) {
         const existing = this.clients.get(id);
         if (JSON.stringify(existing?.config) !== JSON.stringify(serverConfig)) {
@@ -130,7 +140,7 @@ export class ClientManager {
              this.logger.info("ClientManager", `Successfully reconnected downstream: ${id}`);
              resolve(client);
           } else {
-             throw new Error("createTransport returned null");
+             throw new UpstreamConnectionError("createTransport returned null");
           }
         } catch (e: any) {
           this.logger.error("ClientManager", `Reconnect failed for ${id}: ${e.message}`);
@@ -257,7 +267,7 @@ export class ClientManager {
                     this.logger.info("ClientManager", `JIT connection established for: ${id}`);
                     return client;
                 } else {
-                    throw new Error(`Unsupported or null transport connection for: ${id}`);
+                    throw new UpstreamConnectionError(`Unsupported or null transport connection for: ${id}`);
                 }
             } catch (e: any) {
                 this.logger.error("ClientManager", `JIT connection failed for ${id}: ${e.message}`);
@@ -274,7 +284,7 @@ export class ClientManager {
         if (managed.connectingPromise) {
             return managed.connectingPromise;
         }
-        throw new Error(`Client ${id} is stuck reconnecting without a lock`);
+        throw new UpstreamConnectionError(`Client ${id} is stuck reconnecting without a lock`);
     }
 
     return undefined;

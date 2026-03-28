@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.1.1] - 2026-03-28
 
+### Added
+- **Zod Runtime Schema Validation**: Enforced strict `ProxyConfigSchema.parse()` evaluations natively during Core proxy execution and config synchronization (`syncConfig()`). This reliably catches malformed Host application JSON structures dynamically before they reach downstream pipes, safely returning HTTP 500 boundaries.
+- **Typed Error Ecosystem**: Established HTTP-compatible, domain-specific `AagError` hierarchies (`AagConfigurationError`, `RateLimitExceededError`, `UpstreamConnectionError`, `AuthenticationError`, `AuthorizationError`). Host applications can now `catch` typed exceptions and react cleanly without parsing generic JavaScript string messages.
+
 ### Fixed
 - **Multi-Tenant Config Isolation**: Remedied a functional defect in `DataMaskingPlugin` where the middleware failed to poll `IConfigStore` dynamically, causing all AI clients to permanently inherit the global masking rules rather than their distinct, isolated `pluginConfig` overrides.
 - **OOM Memory Leak**: Addressed a severe infinite memory growth vulnerability in `MemoryRateLimitStore` where inactive Token Buckets and Promises were never garbage collected. Implemented a non-blocking `setInterval.unref()` sweep.

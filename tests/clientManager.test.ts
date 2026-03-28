@@ -216,9 +216,9 @@ describe("ClientManager", () => {
 
   it("should return null for unsupported transports triggering boot throw", async () => {
       const { ClientManager: CM } = await import("../src/clientManager.js");
-      clientManager = new CM(new MockConfigStore({ mcpServers: { "unsupported": { transport: "websocket" } as any } } as any), new MockSecretStore(), new MockLogger());
-      await clientManager.syncConfig({ mcpServers: { "unsupported": { transport: "websocket" } as any } } as any);
-      await expect(clientManager.getClientJIT("unsupported")).rejects.toThrow();
+      clientManager = new CM(new MockConfigStore({} as any), new MockSecretStore(), new MockLogger());
+      await expect(clientManager.syncConfig({ mcpServers: { "unsupported": { transport: "websocket" } as any } } as any))
+          .rejects.toThrow("Proxy Configuration Schema is invalid during syncConfig");
   }, 10000);
 
   it("should handle legacy synchronous getClient APIs gracefully", async () => {
