@@ -1,6 +1,6 @@
 {
   "name": "@cyber-sec.space/aag-core",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "Core protocols and interfaces for AI Auth Gateway",
   "keywords": [
     "mcp",

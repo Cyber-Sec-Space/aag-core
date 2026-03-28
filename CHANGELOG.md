@@ -10,7 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **Multi-Tenant Config Isolation**: Remedied a functional defect in `DataMaskingPlugin` where the middleware failed to poll `IConfigStore` dynamically, causing all AI clients to permanently inherit the global masking rules rather than their distinct, isolated `pluginConfig` overrides.
 - **OOM Memory Leak**: Addressed a severe infinite memory growth vulnerability in `MemoryRateLimitStore` where inactive Token Buckets and Promises were never garbage collected. Implemented a non-blocking `setInterval.unref()` sweep.
-- **Documentation**: Added critical Multi-Tenant Cross-State pollution and SSRF vulnerability bounds to the `ARCHITECTURE.md`.
+- **Event Loop Thread Leak**: Resolved an issue causing Node.js worker processes (and Jest tests) to fail to gracefully exit at process termination. Extracted internal Ping Daemon (`setInterval`) and Reconnection Backoff (`setTimeout`) contexts in `ClientManager` to uniquely utilize V8's native `.unref()` detaching to prevent memory and thread deadlocks without altering Promise behavior.
+- **Coverage Excellence**: Enforced an absolute 100% testing coverage standard across Statement, Branch, Function, and Line evaluations throughout all middlewares array and Core pipeline managers.
+- **Documentation**: Added critical Multi-Tenant Cross-State pollution and SSRF vulnerability bounds to the `ARCHITECTURE.md` and `README.md`.
 
 ## [2.1.0] - 2026-03-27
 
