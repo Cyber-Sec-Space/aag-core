@@ -213,7 +213,7 @@ export class ProxyServer {
       }
 
       let args = { ...(request.params.arguments || {}) } as any;
-      const proxyContext: ProxyContext = { serverId: targetServerId, toolName: actualToolName, aiId: this.authenticatedAiId! };
+      const proxyContext: ProxyContext = { serverId: targetServerId, toolName: actualToolName, aiId: this.authenticatedAiId!, auth };
 
       for (const mw of this.middlewares) {
         if (mw.onRequest) {

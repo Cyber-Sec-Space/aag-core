@@ -32,17 +32,13 @@ export class RateLimitMiddleware implements ProxyMiddleware {
     let currentMax = this.maxTokens;
     let currentWindowMs = this.windowMs;
 
-    // Recalculate rate if config exists (for dynamic updates)
-    if (this.configStore) {
-      const config = this.configStore.getConfig();
-      const aiConfig = config?.aiKeys?.[context.aiId];
-      if (aiConfig?.rateLimit?.rpm) {
-        currentMax = aiConfig.rateLimit.rpm;
-        currentWindowMs = 60000;
-      } else if (aiConfig?.rateLimit?.rph) {
-        currentMax = aiConfig.rateLimit.rph;
-        currentWindowMs = 3600000;
-      }
+    // Recalculate rate if config exists explicitly for this identity
+    if (context.auth?.rateLimit?.rpm !== undefined) {
+      currentMax = context.auth.rateLimit.rpm;
+      currentWindowMs = 60000;
+    } else if (context.auth?.rateLimit?.rph !== undefined) {
+      currentMax = context.auth.rateLimit.rph;
+      currentWindowMs = 3600000;
     }
 
     const permitted = await this.rateLimitStore.consume(context.aiId, currentMax, currentWindowMs);

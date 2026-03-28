@@ -25,17 +25,14 @@ export class DataMaskingMiddleware implements ProxyMiddleware {
         let activeRules = this.globalRules;
         let activeMask = this.maskString;
 
-        if (this.configStore) {
-             const aiConfig = this.configStore.getConfig()?.aiKeys?.[context.aiId];
-             const pluginCfg = aiConfig?.pluginConfig?.["aag-core-data-masking"];
-             if (pluginCfg) {
-                 if (Array.isArray(pluginCfg.rules)) {
-                     activeRules = pluginCfg.rules.map((r: string | RegExp) => typeof r === "string" ? new RegExp(r, "gi") : r);
-                 }
-                 if (typeof pluginCfg.maskString === "string") {
-                     activeMask = pluginCfg.maskString;
-                 }
-             }
+        const pluginCfg = context.auth?.pluginConfig?.["aag-core-data-masking"];
+        if (pluginCfg) {
+            if (Array.isArray(pluginCfg.rules)) {
+                activeRules = pluginCfg.rules.map((r: string | RegExp) => typeof r === "string" ? new RegExp(r, "gi") : r);
+            }
+            if (typeof pluginCfg.maskString === "string") {
+                activeMask = pluginCfg.maskString;
+            }
         }
 
         if (activeRules.length === 0) return result;

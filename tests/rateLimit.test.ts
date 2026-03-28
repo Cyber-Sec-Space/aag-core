@@ -12,7 +12,7 @@ describe("RateLimitMiddleware Suite", () => {
 
   it("should allow requests under the limit", async () => {
     const limiter = new RateLimitMiddleware(2, 60000); // 2 per minute
-    const ctx = { aiId: "user-1", serverId: "test", toolName: "test" };
+    const ctx: any = { aiId: "user-1", serverId: "test", toolName: "test", auth: {} };
 
     await expect(limiter.onRequest(ctx, { a: 1 })).resolves.toEqual({ a: 1 });
     await expect(limiter.onRequest(ctx, { a: 2 })).resolves.toEqual({ a: 2 });
@@ -20,7 +20,7 @@ describe("RateLimitMiddleware Suite", () => {
 
   it("should block requests exceeding the limit using Token Bucket", async () => {
     const limiter = new RateLimitMiddleware(2, 60000);
-    const ctx = { aiId: "user-1", serverId: "test", toolName: "test" };
+    const ctx: any = { aiId: "user-1", serverId: "test", toolName: "test", auth: {} };
 
     await limiter.onRequest(ctx, {});
     await limiter.onRequest(ctx, {});
@@ -30,7 +30,7 @@ describe("RateLimitMiddleware Suite", () => {
 
   it("should refill tokens over time uniformly", async () => {
     const limiter = new RateLimitMiddleware(2, 60000);
-    const ctx = { aiId: "user-1", serverId: "test", toolName: "test" };
+    const ctx: any = { aiId: "user-1", serverId: "test", toolName: "test", auth: {} };
 
     await limiter.onRequest(ctx, {});
     await limiter.onRequest(ctx, {});
@@ -45,22 +45,12 @@ describe("RateLimitMiddleware Suite", () => {
     await expect(limiter.onRequest(ctx, {})).rejects.toThrow();
   });
 
-  it("should map dynamic limits from IConfigStore per AI ID properly", async () => {
-    const mockConfigStore: any = {
-      getConfig: () => ({
-        aiKeys: {
-          "premium-user": { rateLimit: { rpm: 10 } },
-          "free-user": { rateLimit: { rpm: 1 } },
-          "slow-user": { rateLimit: { rph: 60 } }
-        }
-      })
-    };
-
+  it("should map dynamic limits from ProxyContext.auth per AI ID properly", async () => {
     // Default 2 per minute mapping
-    const limiter = new RateLimitMiddleware(2, 60000, mockConfigStore);
+    const limiter = new RateLimitMiddleware(2, 60000);
     
-    const premiumCtx = { aiId: "premium-user", serverId: "test", toolName: "test" };
-    const freeCtx = { aiId: "free-user", serverId: "test", toolName: "test" };
+    const premiumCtx: any = { aiId: "premium-user", serverId: "test", toolName: "test", auth: { rateLimit: { rpm: 10 } } };
+    const freeCtx: any = { aiId: "free-user", serverId: "test", toolName: "test", auth: { rateLimit: { rpm: 1 } } };
 
     // Premium gets 10 bursts
     for(let i=0; i<10; i++) {
@@ -73,13 +63,13 @@ describe("RateLimitMiddleware Suite", () => {
     await expect(limiter.onRequest(freeCtx, {})).rejects.toThrow();
 
     // Unknown gets base fallback bounds (2)
-    const unknownCtx = { aiId: "unknown", serverId: "test", toolName: "test" };
+    const unknownCtx: any = { aiId: "unknown", serverId: "test", toolName: "test" };
     await limiter.onRequest(unknownCtx, {});
     await limiter.onRequest(unknownCtx, {});
     await expect(limiter.onRequest(unknownCtx, {})).rejects.toThrow();
 
     // Slow user gets rph boundary
-    const slowCtx = { aiId: "slow-user", serverId: "test", toolName: "test" };
+    const slowCtx: any = { aiId: "slow-user", serverId: "test", toolName: "test", auth: { rateLimit: { rph: 60 } } };
     for(let i=0; i<60; i++) {
         await expect(limiter.onRequest(slowCtx, {})).resolves.toEqual({});
     }
