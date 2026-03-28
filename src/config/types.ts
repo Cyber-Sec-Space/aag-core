@@ -48,6 +48,10 @@ export const AuthKeySchema = z.object({
     deniedServers: z.array(z.string()).optional(),
     allowedTools: z.array(z.string()).optional(),
     deniedTools: z.array(z.string()).optional(),
+    allowedPrompts: z.array(z.string()).optional(),
+    deniedPrompts: z.array(z.string()).optional(),
+    allowedResources: z.array(z.string()).optional(),
+    deniedResources: z.array(z.string()).optional(),
   }).optional(),
   rateLimit: z.object({
     rpm: z.number().optional(), // Requests Per Minute
@@ -58,7 +62,7 @@ export const AuthKeySchema = z.object({
 
 export const SystemConfigSchema = z.object({
   port: z.number().default(3000),
-  logLevel: z.enum(["INFO", "WARN", "ERROR", "DEBUG"]).default("INFO"),
+  logLevel: z.enum(["INFO", "WARN", "ERROR", "DEBUG", "TRACE"]).default("INFO"),
   pingIntervalMs: z.number().optional().default(30000),
   pingTimeoutMs: z.number().optional().default(5000),
   idleTimeoutMs: z.number().optional().default(300000),
