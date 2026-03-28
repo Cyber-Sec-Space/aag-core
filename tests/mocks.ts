@@ -30,4 +30,5 @@ export class MockLogger implements IAuditLogger {
   warn(category: string, message: string): void {}
   error(category: string, message: string): void {}
   debug(category: string, message: string): void {}
+  trace(category: string, message: string): void {}
 }

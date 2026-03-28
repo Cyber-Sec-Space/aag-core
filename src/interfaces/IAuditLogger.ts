@@ -2,7 +2,8 @@ export enum LogLevel {
   INFO = "INFO",
   WARN = "WARN",
   ERROR = "ERROR",
-  DEBUG = "DEBUG"
+  DEBUG = "DEBUG",
+  TRACE = "TRACE"
 }
 
 export interface IAuditLogger {
@@ -10,4 +11,5 @@ export interface IAuditLogger {
   warn(context: string, message: string, data?: any): void;
   error(context: string, message: string, data?: any): void;
   debug(context: string, message: string, data?: any): void;
+  trace(context: string, message: string, data?: any): void;
 }
