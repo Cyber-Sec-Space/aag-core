@@ -290,7 +290,7 @@ describe("ClientManager", () => {
       const { ClientManager: CM } = await import("../src/clientManager.js");
       const config: any = { mcpServers: { 
           "stdio_test": { transport: "stdio", command: "echo", authInjection: { type: "env", key: "Z" } },
-          "http_falsy": { transport: "http", url: "x", authInjection: { type: "header", headerName: "x", value: "x" } }
+          "http_falsy": { transport: "http", url: "http://x", authInjection: { type: "header", headerName: "x", value: "x" } }
       } };
       const mockStore = new MockSecretStore();
       jest.spyOn(mockStore, "resolveSecret").mockResolvedValue(""); 
@@ -358,7 +358,7 @@ describe("ClientManager", () => {
   it("should handle falsy secretStore resolution safely for SSE transport headers natively", async () => {
       const { ClientManager: CM } = await import("../src/clientManager.js");
       const config: any = { mcpServers: { 
-          "sse_falsy": { transport: "sse", url: "x", authInjection: { type: "header", headerName: "x", value: "x" } }
+          "sse_falsy": { transport: "sse", url: "http://x", authInjection: { type: "header", headerName: "x", value: "x" } }
       } };
       const mockStore = new MockSecretStore();
       jest.spyOn(mockStore, "resolveSecret").mockResolvedValue(""); 
