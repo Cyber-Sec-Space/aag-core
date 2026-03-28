@@ -39,9 +39,9 @@ export type McpHttpConfig = z.infer<typeof HttpServerSchema>;
 export type McpServerConfig = McpStdioConfig | McpSseConfig | McpHttpConfig;
 
 export const AuthKeySchema = z.object({
-  key: z.string(),
+  key: z.string().optional(),
   description: z.string().optional(),
-  createdAt: z.string(),
+  createdAt: z.string().optional(),
   revoked: z.boolean().default(false),
   permissions: z.object({
     allowedServers: z.array(z.string()).optional(),
