@@ -221,6 +221,19 @@ describe("ClientManager", () => {
           .rejects.toThrow("Proxy Configuration Schema is invalid during syncConfig");
   }, 10000);
 
+  it("should securely hit unsupported transport throws deeply inside proxy routines bypassing Zod artificially", async () => {
+      const { ClientManager: CM } = await import("../src/clientManager.js");
+      clientManager = new CM(new MockConfigStore({mcpServers: {}} as any), new MockSecretStore(), new MockLogger());
+      
+      (clientManager as any).clients.set("unsupported-hack", {
+          config: { transport: "websocket" },
+          status: "DISCONNECTED",
+          reconnectAttempts: 0
+      });
+      
+      await expect(clientManager.getClientJIT("unsupported-hack")).rejects.toThrow("Unsupported or null transport connection for: unsupported-hack");
+  });
+
   it("should handle legacy synchronous getClient APIs gracefully", async () => {
     const { ClientManager: CM } = await import("../src/clientManager.js");
     const config: any = { mcpServers: { "legacy-server": { transport: "stdio", command: "echo" } } };

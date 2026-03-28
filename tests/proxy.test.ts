@@ -3,6 +3,7 @@ import { ProxyServer } from "../src/proxy.js";
 import { ClientManager } from "../src/clientManager.js";
 import { MockConfigStore, MockSecretStore, MockLogger } from "./mocks.js";
 import { RateLimitMiddleware } from "../src/middleware/rateLimit.js";
+import { AagError } from "../src/errors.js";
 
 describe("ProxyServer Suite", () => {
     let proxy: any;
@@ -89,6 +90,16 @@ describe("ProxyServer Suite", () => {
     // Verifies `validateAuth` dynamically authorizes the AI agent safely.
     // ----------------------------------------------------
     describe("Authentication", () => {
+        it("should successfully instantiate base AagError defaults natively", () => {
+            const err = new AagError("msg", "CODE");
+            expect(err.status).toBe(500);
+        });
+
+        it("should catch Zod schema validation errors directly throwing AagConfigurationError safely", () => {
+            configStore.getConfig().mcpServers["github"] = { transport: "stdio", command: 123 as any } as any;
+            expect(() => proxy.validateAuth({}, {})).toThrow("Proxy Configuration Schema is malformed or invalid.");
+        });
+
         it("should validate auth dynamically from environment", () => {
             const validateAuth = proxy.validateAuth.bind(proxy);
             const aiid = validateAuth({}, {});
