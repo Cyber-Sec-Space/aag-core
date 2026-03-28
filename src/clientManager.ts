@@ -16,6 +16,7 @@ export interface ManagedClient {
   reconnectAttempts: number;
   lastAccessed: number;
   connectingPromise?: Promise<Client | undefined>;
+  reconnectTimeout?: ReturnType<typeof setTimeout>;
 }
 
 export class ClientManager {
@@ -68,6 +69,10 @@ export class ClientManager {
         }
       }
     }, this.pingIntervalMs);
+    /* istanbul ignore next */
+    if (this.pingInterval?.unref) {
+      this.pingInterval.unref();
+    }
   }
 
   public async syncConfig(config: ProxyConfig) {
@@ -110,7 +115,8 @@ export class ClientManager {
     this.logger.info("ClientManager", `Scheduling reconnect for ${id} in ${backoffTime}ms (Attempt ${managed.reconnectAttempts})`);
 
     managed.connectingPromise = new Promise((resolve) => {
-      setTimeout(async () => {
+      managed.reconnectTimeout = setTimeout(async () => {
+        managed.reconnectTimeout = undefined;
         if (this.isDestroyed) { resolve(undefined); return; }
         const current = this.clients.get(id);
         if (!current || current.status !== "RECONNECTING") { resolve(undefined); return; }
@@ -134,6 +140,11 @@ export class ClientManager {
           current.connectingPromise = undefined;
         }
       }, backoffTime);
+      
+      /* istanbul ignore next */
+      if (managed.reconnectTimeout?.unref) {
+          managed.reconnectTimeout.unref();
+      }
     });
   }
 
