@@ -52,7 +52,7 @@ The `ProxyServer` manages the upstream endpoint handling connecting AI models (s
 
 ```mermaid
 flowchart TD
-    Req[Incoming MCP Request] --> Validate{validateAuth()}
+    Req[Incoming MCP Request] --> Validate{"validateAuth()"}
     Validate -- Failure --> Err1[throw AuthenticationError]
     Validate -- Success --> Ctx[Inject context.auth]
     
@@ -104,7 +104,7 @@ The `SessionManager` exposes a direct interruption mapping:
 ```mermaid
 flowchart LR
     Admin((System Admin)) --> |Revoke Credentials| Hook(Revocation Hook / API)
-    Hook --> SM{SessionManager.disconnectSession(aiId)}
+    Hook --> SM{"SessionManager.disconnectSession(aiId)"}
     
     SM --> |Matched AI_ID 1| Sock1[Close SSE Stream]
     SM --> |Matched AI_ID 1| Sock2[Close WebHook Event]
@@ -186,7 +186,7 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    Req[收到原生 MCP Request] --> Validate{validateAuth()}
+    Req[收到原生 MCP Request] --> Validate{"validateAuth()"}
     Validate -- 身分異常 --> Err1[拋出 AuthenticationError]
     Validate -- 認證核准 --> Ctx[注入 context.auth 身分物件]
     
@@ -238,7 +238,7 @@ sequenceDiagram
 ```mermaid
 flowchart LR
     Admin((系統最高管理員)) --> |將帳號停權| Hook(管理端 API)
-    Hook --> SM{SessionManager.disconnectSession(aiId)}
+    Hook --> SM{"SessionManager.disconnectSession(aiId)"}
     
     SM --> |成功比對出帳號| Sock1[瞬間關閉 SSE 串流]
     SM --> |若尚有多重視窗| Sock2[終止殘局背景]
