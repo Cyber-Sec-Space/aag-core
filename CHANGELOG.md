@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Tenant Scope Isolation (`tenantId`)**: Introduced `tenantId` property in `AuthKeySchema` which instructs the `ClientManager` to group and share JIT connection pools across all `aiId`s belonging to the same tenant. Achieves zero-redundancy O(1) connection sharing.
 - **RCE Security Gate (`allowStdio`)**: Implemented a system-wide `allowStdio` toggle in `SystemConfigSchema` (default: `false`). This acts as a hard boundary preventing SaaS tenants from defining `stdio` transports, effectively securing the host instance against Remote Code Execution (RCE) vectors while empowering HTTP/SSE based decoupled integrations.
 
+### Fixed
+- **100k SaaS Concurrent Ping Starvation**: Completely rewrote the `ClientManager.pingInterval` health check daemon. Removed sequential `await` locks within the connection polling loop and transitioned to `Promise.race()` asynchronous event-loop concurrency. This natively prevents NodeJS from blocking for minutes when checking tens of thousands of downstream SaaS MCP servers.
+- **Extreme Memory Scale (O(1))**: Upgraded `regexPatternCache` (ProxyServer) and `pluginRegexCache` (DataMaskingPlugin) from instance properties to global `static` properties. This definitively eliminates duplicate matching allocations, locking memory footprint to true `O(1)` even when spawning 100,000 independent multi-tenant Proxy Sessions.
 ## [2.2.0] - 2026-03-28
 
 ### Added

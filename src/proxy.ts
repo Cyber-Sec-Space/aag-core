@@ -115,17 +115,17 @@ export class ProxyServer {
     return auth;
   }
 
-  private regexPatternCache = new Map<string, RegExp>();
+  private static regexPatternCache = new Map<string, RegExp>();
 
   private matchPattern(value: string, pattern: string): boolean {
     if (pattern === "*") return true;
     if (!pattern.includes("*")) return value === pattern;
     
-    let regex = this.regexPatternCache.get(pattern);
+    let regex = ProxyServer.regexPatternCache.get(pattern);
     if (!regex) {
        const regexPattern = "^" + pattern.split("*").map(s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$";
        regex = new RegExp(regexPattern);
-       this.regexPatternCache.set(pattern, regex);
+       ProxyServer.regexPatternCache.set(pattern, regex);
     }
     
     return regex.test(value);

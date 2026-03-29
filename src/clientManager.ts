@@ -48,7 +48,7 @@ export class ClientManager {
   }
 
   private startPingDaemon() {
-    this.pingInterval = setInterval(async () => {
+    this.pingInterval = setInterval(() => {
       const now = Date.now();
       for (const [id, managed] of this.clients.entries()) {
         if (managed.status === "CONNECTED" && managed.client) {
@@ -66,14 +66,15 @@ export class ClientManager {
              continue;
           }
 
-          try {
-            const pingPromise = managed.client.ping();
-            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Ping timeout")), this.pingTimeoutMs));
-            await Promise.race([pingPromise, timeoutPromise]);
-          } catch (e: any) {
-            this.logger.warn("ClientManager", `Client ${id} failed ping check: ${e.message}. Triggering reconnect.`);
-            this.triggerReconnect(id);
-          }
+          const pingPromise = managed.client.ping();
+          const timeoutPromise = new Promise<void>((_, reject) => setTimeout(() => reject(new Error("Ping timeout")), this.pingTimeoutMs));
+          
+          Promise.race([pingPromise, timeoutPromise]).catch((e: any) => {
+            if (this.clients.get(id)?.status === "CONNECTED") {
+               this.logger.warn("ClientManager", `Client ${id} failed ping check: ${e.message}. Triggering reconnect.`);
+               this.triggerReconnect(id);
+            }
+          });
         }
       }
     }, this.pingIntervalMs);
