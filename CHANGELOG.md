@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2026-03-29
+
+### Added
+- **Multi-Tenant BYO-MCP (Bring Your Own MCP)**: Upgraded `AuthKeySchema` and `ClientManager` to support tenant-specific MCP server definitions dynamically (`auth.mcpServers`). This allows users/tenants in a SaaS environment to connect their own private MCP servers seamlessly without restarting the core gateway.
+- **Tenant Scope Isolation (`tenantId`)**: Introduced `tenantId` property in `AuthKeySchema` which instructs the `ClientManager` to group and share JIT connection pools across all `aiId`s belonging to the same tenant. Achieves zero-redundancy O(1) connection sharing.
+- **RCE Security Gate (`allowStdio`)**: Implemented a system-wide `allowStdio` toggle in `SystemConfigSchema` (default: `false`). This acts as a hard boundary preventing SaaS tenants from defining `stdio` transports, effectively securing the host instance against Remote Code Execution (RCE) vectors while empowering HTTP/SSE based decoupled integrations.
+
 ## [2.2.0] - 2026-03-28
 
 ### Added

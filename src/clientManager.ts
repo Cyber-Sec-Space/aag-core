@@ -2,7 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { ProxyConfig, McpServerConfig, McpStdioConfig, McpSseConfig, McpHttpConfig } from "./config/types.js";
+import { ProxyConfig, McpServerConfig, McpStdioConfig, McpSseConfig, McpHttpConfig, AuthKey } from "./config/types.js";
 import { IConfigStore } from "./interfaces/IConfigStore.js";
 import { ISecretStore } from "./interfaces/ISecretStore.js";
 import { IAuditLogger } from "./interfaces/IAuditLogger.js";
@@ -19,6 +19,7 @@ export interface ManagedClient {
   lastAccessed: number;
   connectingPromise?: Promise<Client | undefined>;
   reconnectTimeout?: ReturnType<typeof setTimeout>;
+  isTenantContext?: boolean;
 }
 
 export class ClientManager {
@@ -57,6 +58,11 @@ export class ClientManager {
              managed.status = "DISCONNECTED_IDLE";
              managed.client.close().catch(()=>{});
              managed.client = null;
+             
+             // Dynamic tenant clients are ephemeral; fully remove if idle
+             if (managed.isTenantContext) {
+                 this.clients.delete(id);
+             }
              continue;
           }
 
@@ -86,7 +92,11 @@ export class ClientManager {
         throw new AagConfigurationError("Proxy Configuration Schema is invalid during syncConfig", e.errors);
     }
     
-    const currentServerIds = new Set(this.clients.keys());
+    const currentServerIds = new Set(
+        Array.from(this.clients.entries())
+        .filter(([_, m]) => !m.isTenantContext)
+        .map(([id]) => id)
+    );
     const newServerIds = new Set(Object.keys(parsedConfig.mcpServers));
 
     for (const id of currentServerIds) {
@@ -132,7 +142,7 @@ export class ClientManager {
         if (!current || current.status !== "RECONNECTING") { resolve(undefined); return; }
 
         try {
-          const client = await this.createTransportAndConnect(id, current.config);
+          const client = await this.createTransportAndConnect(id, current.config, current.isTenantContext);
           if (client) {
              current.client = client;
              current.status = "CONNECTED";
@@ -175,18 +185,18 @@ export class ClientManager {
   }
 
   private async addClient(id: string, config: McpServerConfig) {
-    // JIT: We do NOT connect instantly. We stay in DISCONNECTED_IDLE.
     this.clients.set(id, {
         client: null,
         config,
         status: "DISCONNECTED_IDLE",
         reconnectAttempts: 0,
-        lastAccessed: Date.now()
+        lastAccessed: Date.now(),
+        isTenantContext: false
     });
     this.logger.info("ClientManager", `Registered downstream config for ${id}. (Awaiting JIT connection)`);
   }
 
-  private async createTransportAndConnect(id: string, config: McpServerConfig): Promise<Client | null> {
+  private async createTransportAndConnect(id: string, config: McpServerConfig, isTenantContext: boolean = false): Promise<Client | null> {
     const client = new Client(
       { name: "mcp-proxy-client", version: "1.0.0" },
       { capabilities: {} }
@@ -195,6 +205,13 @@ export class ClientManager {
     let transport;
 
     if (config.transport === "stdio") {
+      if (isTenantContext) {
+        const sys = this.configStore.getConfig()?.system;
+        if (!sys?.allowStdio) {
+            throw new AagConfigurationError(`Disallowed transport: 'stdio' is disabled for tenant-provided MCP servers.`);
+        }
+      }
+
       const stdioConfig = config as McpStdioConfig;
       const env: Record<string, string> = Object.assign({}, process.env, stdioConfig.env) as Record<string, string>;
       
@@ -239,16 +256,11 @@ export class ClientManager {
     return null;
   }
 
-  public getClient(id: string): Client | undefined {
-    const managed = this.clients.get(id);
-    if (managed) managed.lastAccessed = Date.now();
-    return managed?.status === "CONNECTED" && managed.client ? managed.client : undefined;
+  private getTenantScopeId(auth: AuthKey): string {
+      return auth.tenantId || auth.key || "anonymous";
   }
 
-  public async getClientJIT(id: string): Promise<Client | undefined> {
-    const managed = this.clients.get(id);
-    if (!managed) return undefined;
-
+  private async _resolveJIT(id: string, managed: ManagedClient): Promise<Client | undefined> {
     managed.lastAccessed = Date.now();
 
     if (managed.status === "CONNECTED" && managed.client) {
@@ -259,19 +271,19 @@ export class ClientManager {
         managed.status = "RECONNECTING";
         managed.connectingPromise = (async () => {
             try {
-                const client = await this.createTransportAndConnect(id, managed.config);
+                const client = await this.createTransportAndConnect(id, managed.config, !!managed.isTenantContext);
                 if (client) {
                     managed.client = client;
                     managed.status = "CONNECTED";
                     managed.reconnectAttempts = 0;
-                    this.logger.info("ClientManager", `JIT connection established for: ${id}`);
+                    this.logger.info("ClientManager", `JIT connection established for: ${id} (Tenant Context: ${!!managed.isTenantContext})`);
                     return client;
                 } else {
                     throw new UpstreamConnectionError(`Unsupported or null transport connection for: ${id}`);
                 }
             } catch (e: any) {
                 this.logger.error("ClientManager", `JIT connection failed for ${id}: ${e.message}`);
-                managed.status = "DISCONNECTED"; // Revert so next JIT can try
+                managed.status = "DISCONNECTED";
                 throw e;
             } finally {
                 managed.connectingPromise = undefined;
@@ -290,25 +302,93 @@ export class ClientManager {
     return undefined;
   }
 
-  public getClientStatus(id: string): ClientStatus | undefined {
-    return this.clients.get(id)?.status;
+  public getClient(id: string, auth?: AuthKey): Client | undefined {
+    let managed = this.clients.get(id);
+    if (!managed && auth && auth.mcpServers && auth.mcpServers[id]) {
+       const scopeId = this.getTenantScopeId(auth);
+       managed = this.clients.get(`${scopeId}::${id}`);
+    }
+
+    if (managed) {
+        managed.lastAccessed = Date.now();
+        return managed.status === "CONNECTED" && managed.client ? managed.client : undefined;
+    }
+    return undefined;
   }
 
-  public async getClientsJIT(): Promise<Map<string, Client>> {
-    const map = new Map<string, Client>();
-    for (const [id, managed] of this.clients.entries()) {
-      try {
-        const client = await this.getClientJIT(id);
-        if (client) map.set(id, client);
-      } catch(e) { /* ignore JIT failures from dead servers */ }
+  public async getClientJIT(id: string, auth?: AuthKey): Promise<Client | undefined> {
+    const globalManaged = this.clients.get(id);
+    if (globalManaged && !globalManaged.isTenantContext) {
+        return this._resolveJIT(id, globalManaged);
     }
+
+    if (auth && auth.mcpServers && auth.mcpServers[id]) {
+        const scopeId = this.getTenantScopeId(auth);
+        const scopedId = `${scopeId}::${id}`;
+        
+        let tenantManaged = this.clients.get(scopedId);
+        const newConfigStr = JSON.stringify(auth.mcpServers[id]);
+        
+        if (tenantManaged && JSON.stringify(tenantManaged.config) !== newConfigStr) {
+            await this.removeClient(scopedId);
+            tenantManaged = undefined;
+        }
+        
+        if (!tenantManaged) {
+             tenantManaged = {
+                client: null,
+                config: auth.mcpServers[id],
+                status: "DISCONNECTED_IDLE",
+                reconnectAttempts: 0,
+                lastAccessed: Date.now(),
+                isTenantContext: true
+             };
+             this.clients.set(scopedId, tenantManaged);
+        }
+        
+        return this._resolveJIT(scopedId, tenantManaged);
+    }
+
+    return undefined;
+  }
+
+  public getClientStatus(id: string, auth?: AuthKey): ClientStatus | undefined {
+    let managed = this.clients.get(id);
+    if (!managed && auth && auth.mcpServers && auth.mcpServers[id]) {
+       const scopeId = this.getTenantScopeId(auth);
+       managed = this.clients.get(`${scopeId}::${id}`);
+    }
+    return managed?.status;
+  }
+
+  public async getClientsJIT(auth?: AuthKey): Promise<Map<string, Client>> {
+    const map = new Map<string, Client>();
+    
+    for (const [id, managed] of this.clients.entries()) {
+      if (!managed.isTenantContext) {
+         try {
+           const client = await this.getClientJIT(id, auth);
+           if (client) map.set(id, client);
+         } catch(e) {}
+      }
+    }
+    
+    if (auth && auth.mcpServers) {
+        for (const id of Object.keys(auth.mcpServers)) {
+            try {
+                const client = await this.getClientJIT(id, auth);
+                if (client) map.set(id, client);
+            } catch(e) {}
+        }
+    }
+    
     return map;
   }
   
   public getClients(): Map<string, Client> {
     const map = new Map<string, Client>();
     for (const [id, managed] of this.clients.entries()) {
-      if (managed.status === "CONNECTED" && managed.client) {
+      if (!managed.isTenantContext && managed.status === "CONNECTED" && managed.client) {
         map.set(id, managed.client);
       }
     }

@@ -41,6 +41,7 @@ export type McpServerConfig = McpStdioConfig | McpSseConfig | McpHttpConfig;
 export const AuthKeySchema = z.object({
   key: z.string().optional(),
   description: z.string().optional(),
+  tenantId: z.string().optional(),
   createdAt: z.string().optional(),
   revoked: z.boolean().default(false),
   permissions: z.object({
@@ -57,12 +58,14 @@ export const AuthKeySchema = z.object({
     rpm: z.number().int().nonnegative().optional(), // Requests Per Minute
     rph: z.number().int().nonnegative().optional()  // Requests Per Hour
   }).optional(),
-  pluginConfig: z.record(z.string(), z.any()).optional().default({})
+  pluginConfig: z.record(z.string(), z.any()).optional().default({}),
+  mcpServers: z.record(z.string(), McpServerConfigSchema).optional()
 });
 
 export const SystemConfigSchema = z.object({
   port: z.number().int().min(0).max(65535).default(3000),
   logLevel: z.enum(["INFO", "WARN", "ERROR", "DEBUG", "TRACE"]).default("INFO"),
+  allowStdio: z.boolean().default(false),
   pingIntervalMs: z.number().int().positive().optional().default(30000),
   pingTimeoutMs: z.number().int().positive().optional().default(5000),
   idleTimeoutMs: z.number().int().positive().optional().default(300000),

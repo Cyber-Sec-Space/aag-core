@@ -160,7 +160,7 @@ export class ProxyServer {
     this.server.setRequestHandler(ListToolsRequestSchema, async (request, extra) => {
       const auth = await this.validateAuth(request, extra);
       const allTools: Tool[] = [];
-      const clients = await this.clientManager.getClientsJIT();
+      const clients = await this.clientManager.getClientsJIT(auth);
 
       for (const [serverId, client] of clients.entries()) {
         try {
@@ -188,7 +188,10 @@ export class ProxyServer {
       
       let targetServerId: string | null = null;
       let actualToolName: string | null = null;
-      const servers = Object.keys(this.configStore.getConfig()?.mcpServers || {});
+      
+      const globalServers = Object.keys(this.configStore.getConfig()?.mcpServers || {});
+      const tenantServers = Object.keys(auth.mcpServers || {});
+      const servers = Array.from(new Set([...globalServers, ...tenantServers]));
 
       for (const serverId of servers) {
         const prefix = `${serverId}___`;
@@ -209,13 +212,13 @@ export class ProxyServer {
         throw new AuthorizationError(`Permission denied: AI ID '${this.authenticatedAiId}' is not allowed to use tool '${requestedName}'.`);
       }
 
-      const config = this.configStore.getConfig()?.mcpServers?.[targetServerId] as any;
+      const config = (auth.mcpServers?.[targetServerId] || this.configStore.getConfig()?.mcpServers?.[targetServerId]) as any;
       if (!config) {
         throw new AagConfigurationError(`Config for ${targetServerId} not found`);
       }
 
       // JIT Connection Wake-Up
-      const client = await this.clientManager.getClientJIT(targetServerId);
+      const client = await this.clientManager.getClientJIT(targetServerId, auth);
       if (!client) {
         this.logger.error("Proxy", `Downstream client ${targetServerId} could not be connected JIT.`);
         throw new UpstreamConnectionError(`Client ${targetServerId} is disconnected and failed to wake up.`);
