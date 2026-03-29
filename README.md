@@ -126,9 +126,14 @@ It is incredibly easy to develop and publish your own plugins. Simply implement 
 import { IPlugin, PluginContext, ProxyMiddleware } from '@cyber-sec.space/aag-core';
 
 class MyCustomMiddleware implements ProxyMiddleware {
+  constructor(private options: any) {}
+
   async onRequest(context, args) {
-    // context.aiId allows you to securely apply user-specific logic
-    console.log(`User ${context.aiId} is calling ${context.toolName}`);
+    // Read tenant-isolated configuration dynamically injected by aag-core
+    const userOverrides = context.auth?.pluginConfig?.["my-custom-plugin"] || {};
+    const effectiveOptions = { ...this.options, ...userOverrides };
+
+    console.log(`User ${context.aiId} called ${context.toolName} (Setting: ${effectiveOptions.settingName})`);
     return args;
   }
 }
@@ -137,10 +142,10 @@ const MyCustomPlugin: IPlugin = {
   name: "my-custom-plugin",
   version: "1.0.0",
   register: async (context: PluginContext) => {
-    // 1. Read parameters (combines global fallback options & aiKeys[...].pluginConfig)
+    // 1. Read global default parameters (applies to users without specific overrides)
     const options = context.options || {};
     
-    // 2. Register your interceptors into the engine
+    // 2. Register your interceptors into the proxy engine
     context.proxyServer.use(new MyCustomMiddleware(options));
     
     context.logger.info("MyPlugin", "Successfully injected middleware into AAG!");
@@ -276,8 +281,11 @@ class MyCustomMiddleware implements ProxyMiddleware {
   constructor(private options: any) {}
 
   async onRequest(context, args) {
-    // context.aiId 讓您確保邏輯被安全地隔離在獨立的執行環境沙盒內
-    console.log(`使用者 ${context.aiId} 正在呼叫 ${context.toolName}`);
+    // 透過 aag-core 原生注入的身分物件 (AuthKey)，動態讀取租戶隔離的參數覆寫
+    const userOverrides = context.auth?.pluginConfig?.["my-custom-plugin"] || {};
+    const effectiveOptions = { ...this.options, ...userOverrides };
+
+    console.log(`使用者 ${context.aiId} 正在呼叫 ${context.toolName} (設定檔套用：${effectiveOptions.settingName})`);
     return args;
   }
 }
@@ -286,10 +294,10 @@ const MyCustomPlugin: IPlugin = {
   name: "my-custom-plugin",
   version: "1.0.0",
   register: async (context: PluginContext) => {
-    // 1. 讀取參數 (此處已經自動合併「全域預設選項」以及「使用者專屬 pluginConfig」)
+    // 1. 讀取全域預設參數 (套用至那些沒有專屬 pluginConfig 覆寫的租戶)
     const options = context.options || {};
     
-    // 2. 將攔截器註冊進入代理核心引擎
+    // 2. 將攔截器註冊進入代理架構
     context.proxyServer.use(new MyCustomMiddleware(options));
     
     context.logger.info("MyPlugin", "外掛已成功掛載！");
