@@ -98,6 +98,112 @@ describe("ClientManager", () => {
     jest.useRealTimers();
   });
 
+  describe("SaaS Multi-Tenant Specific Edge Cases", () => {
+    it("should evict idle tenant contexts fully from memory map, preventing Map bloat", async () => {
+      jest.useFakeTimers();
+      const { ClientManager: CM } = await import("../src/clientManager.js");
+      const configStore = new MockConfigStore({ system: { idleTimeoutMs: 1000 } } as any);
+      clientManager = new CM(configStore, new MockSecretStore(), new MockLogger());
+      
+      const auth = { key: "secret", tenantId: "tenant-ABC", mcpServers: { "tenant-server": { transport: "sse", url: "http://test" } as any } };
+      const client = await clientManager.getClientJIT("tenant-server", auth);
+      expect(client).toBeDefined();
+
+      // At this point it's connected and inside the map under 'tenant-ABC::tenant-server'
+      const scopeId = "tenant-ABC::tenant-server";
+      expect(clientManager.getClientStatus("tenant-server", auth)).toBe("CONNECTED");
+      
+      // Fast forward past idle timeout
+      await jest.advanceTimersByTimeAsync(30000 + 1500); // Exceed both idle and ping interval
+      
+      // Should completely be deleted from map
+      expect(clientManager.getClientStatus("tenant-server", auth)).toBeUndefined();
+      jest.useRealTimers();
+    });
+
+    it("should resolve getClient and getClientStatus cleanly via auth alias translation", async () => {
+      const { ClientManager: CM } = await import("../src/clientManager.js");
+      clientManager = new CM(new MockConfigStore({} as any), new MockSecretStore(), new MockLogger());
+      
+      const auth = { key: "secret", tenantId: "tenant-ABC", mcpServers: { "alias-srv": { transport: "sse", url: "http://test" } as any } } as any;
+      
+      // Initially undefined
+      expect(clientManager.getClient("alias-srv", auth)).toBeUndefined();
+      expect(clientManager.getClientStatus("alias-srv", auth)).toBeUndefined();
+
+      // Trigger JIT
+      await clientManager.getClientJIT("alias-srv", auth);
+
+      // Now it should be resolvable
+      expect(clientManager.getClientStatus("alias-srv", auth)).toBe("CONNECTED");
+      expect(clientManager.getClient("alias-srv", auth)).toBeDefined();
+    });
+
+    it("should throw AagConfigurationError if tenant tries to define stdio but the system blocks it", async () => {
+      const { ClientManager: CM } = await import("../src/clientManager.js");
+      // System defaults allowStdio to false or undefined
+      clientManager = new CM(new MockConfigStore({} as any), new MockSecretStore(), new MockLogger());
+      
+      const auth = { key: "secret", tenantId: "tenant-RCE", mcpServers: { "evil-server": { transport: "stdio", command: "rm", args: ["-rf", "/"] } as any } } as any;
+      
+      let errorThrown = false;
+      try {
+          await clientManager.getClientJIT("evil-server", auth);
+      } catch (e: any) {
+          errorThrown = true;
+          expect(e.message).toContain("Disallowed transport: 'stdio' is disabled for tenant-provided MCP servers");
+      }
+      expect(errorThrown).toBe(true);
+
+      // Now test the allowed branch (Line 211 false branch)
+      const allowedConfigStore = new MockConfigStore({ system: { allowStdio: true } } as any);
+      const allowedClientManager = new CM(allowedConfigStore, new MockSecretStore(), new MockLogger());
+      const allowedClient = await allowedClientManager.getClientJIT("evil-server", auth);
+      expect(allowedClient).toBeDefined();
+    });
+
+    it("should fallback to anonymous scope if neither tenantId nor key is present", async () => {
+      const { ClientManager: CM } = await import("../src/clientManager.js");
+      clientManager = new CM(new MockConfigStore({} as any), new MockSecretStore(), new MockLogger());
+      const auth: any = { mcpServers: { "anon-srv": { transport: "sse", url: "http://anon" } } };
+      await clientManager.getClientJIT("anon-srv", auth);
+      expect(clientManager.getClientStatus("anon-srv", auth)).toBe("CONNECTED");
+    });
+
+    it("should handle undefined return during getClientsJIT tenant mapping", async () => {
+      const { ClientManager: CM } = await import("../src/clientManager.js");
+      clientManager = new CM(new MockConfigStore({} as any), new MockSecretStore(), new MockLogger());
+      const auth = { key: "secret", mcpServers: { "faulty": { transport: "sse", url: "http://test" } as any } } as any;
+      jest.spyOn(clientManager, "getClientJIT").mockResolvedValue(undefined);
+      const map = await clientManager.getClientsJIT(auth);
+      expect(map.size).toBe(0); // getClientJIT mocked to undefined, branch 381 false path
+    });
+
+    it("should skip dead reconnecting clients gracefully during ping daemon race", async () => {
+      jest.useFakeTimers();
+      const { ClientManager: CM } = await import("../src/clientManager.js");
+      clientManager = new CM(new MockConfigStore({} as any), new MockSecretStore(), new MockLogger());
+      const auth = { key: "secret", mcpServers: { "ping-srv": { transport: "sse", url: "http://ping" } as any } } as any;
+      
+      const client = await clientManager.getClientJIT("ping-srv", auth);
+      
+      // When ping starts running, it will synchronously mutate the client's status first, 
+      // preventing the catch handler from triggering triggerReconnect.
+      (client as any).ping.mockImplementationOnce(() => {
+          const managed = (clientManager as any).clients.get("secret::ping-srv");
+          if (managed) managed.status = "DISCONNECTED"; 
+          return Promise.reject(new Error("Timeout"));
+      });
+
+      // Trigger the interval logic
+      await jest.advanceTimersByTimeAsync(30000);
+      
+      // Verify triggerReconnect was NOT called and state remains what we forced it to
+      expect(clientManager.getClientStatus("ping-srv", auth)).toBe("DISCONNECTED");
+      jest.useRealTimers();
+    });
+  });
+
   // Tests the HTTP streaming downstream constructor branches and Auth Injection header mechanics.
   it("should parse streamableHttp transport and handle auth header injections", async () => {
     const { ClientManager: CM } = await import("../src/clientManager.js");

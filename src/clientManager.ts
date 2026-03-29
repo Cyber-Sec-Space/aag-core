@@ -143,7 +143,7 @@ export class ClientManager {
         if (!current || current.status !== "RECONNECTING") { resolve(undefined); return; }
 
         try {
-          const client = await this.createTransportAndConnect(id, current.config, current.isTenantContext);
+          const client = await this.createTransportAndConnect(id, current.config, !!current.isTenantContext);
           if (client) {
              current.client = client;
              current.status = "CONNECTED";
@@ -197,7 +197,7 @@ export class ClientManager {
     this.logger.info("ClientManager", `Registered downstream config for ${id}. (Awaiting JIT connection)`);
   }
 
-  private async createTransportAndConnect(id: string, config: McpServerConfig, isTenantContext: boolean = false): Promise<Client | null> {
+  private async createTransportAndConnect(id: string, config: McpServerConfig, isTenantContext: boolean): Promise<Client | null> {
     const client = new Client(
       { name: "mcp-proxy-client", version: "1.0.0" },
       { capabilities: {} }

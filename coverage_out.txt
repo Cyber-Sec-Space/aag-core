@@ -1,0 +1,21 @@
+
+> @cyber-sec.space/aag-core@3.0.0 test
+> NODE_OPTIONS='--experimental-vm-modules' npx jest --coverage
+
+---------------------|---------|----------|---------|---------|--------------------
+File                 | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s  
+---------------------|---------|----------|---------|---------|--------------------
+All files            |     100 |       98 |     100 |     100 |                    
+ src                 |     100 |    97.57 |     100 |     100 |                    
+  clientManager.ts   |     100 |    95.89 |     100 |     100 | 73,200,211,261,381 
+  errors.ts          |     100 |      100 |     100 |     100 |                    
+  pluginLoader.ts    |     100 |      100 |     100 |     100 |                    
+  proxy.ts           |     100 |      100 |     100 |     100 |                    
+ src/auth            |     100 |      100 |     100 |     100 |                    
+  ConfigAuthStore.ts |     100 |      100 |     100 |     100 |                    
+ src/middleware      |     100 |      100 |     100 |     100 |                    
+  dataMasking.ts     |     100 |      100 |     100 |     100 |                    
+  rateLimit.ts       |     100 |      100 |     100 |     100 |                    
+ src/session         |     100 |      100 |     100 |     100 |                    
+  SessionManager.ts  |     100 |      100 |     100 |     100 |                    
+---------------------|---------|----------|---------|---------|--------------------

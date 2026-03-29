@@ -46,6 +46,10 @@ describe("DataMaskingMiddleware Suite", () => {
         const processedA = await masker.onResponse(ctxA, resultA) as any;
         expect(processedA.content[0].text).toBe("Global: global_secret. Tenant: [XXX]");
         
+        // Call it a second time to hit the static pluginRegexCache
+        const processedA2 = await masker.onResponse(ctxA, resultA) as any;
+        expect(processedA2.content[0].text).toBe("Global: global_secret. Tenant: [XXX]");
+        
         // Tenant B: Should use global rules and tenant mask
         const ctxB: any = { 
             aiId: "tenant-B", serverId: "test", toolName: "test",
