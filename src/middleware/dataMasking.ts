@@ -10,6 +10,7 @@ export class DataMaskingMiddleware implements ProxyMiddleware {
     private globalRules: RegExp[];
     private maskString: string;
     private configStore?: IConfigStore;
+    private pluginRegexCache = new Map<string, RegExp>();
 
     constructor(rules: (RegExp | string)[], maskString = "***", configStore?: IConfigStore) {
         this.globalRules = rules.map(r => typeof r === "string" ? new RegExp(r, "gi") : r);
@@ -28,7 +29,15 @@ export class DataMaskingMiddleware implements ProxyMiddleware {
         const pluginCfg = context.auth?.pluginConfig?.["aag-core-data-masking"];
         if (pluginCfg) {
             if (Array.isArray(pluginCfg.rules)) {
-                activeRules = pluginCfg.rules.map((r: string | RegExp) => typeof r === "string" ? new RegExp(r, "gi") : r);
+                activeRules = pluginCfg.rules.map((r: string | RegExp) => {
+                    if (typeof r !== "string") return r;
+                    let regex = this.pluginRegexCache.get(r);
+                    if (!regex) {
+                        regex = new RegExp(r, "gi");
+                        this.pluginRegexCache.set(r, regex);
+                    }
+                    return regex;
+                });
             }
             if (typeof pluginCfg.maskString === "string") {
                 activeMask = pluginCfg.maskString;

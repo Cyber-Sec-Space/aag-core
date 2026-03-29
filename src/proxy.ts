@@ -115,11 +115,20 @@ export class ProxyServer {
     return auth;
   }
 
+  private regexPatternCache = new Map<string, RegExp>();
+
   private matchPattern(value: string, pattern: string): boolean {
     if (pattern === "*") return true;
     if (!pattern.includes("*")) return value === pattern;
-    const regexPattern = "^" + pattern.split("*").map(s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$";
-    return new RegExp(regexPattern).test(value);
+    
+    let regex = this.regexPatternCache.get(pattern);
+    if (!regex) {
+       const regexPattern = "^" + pattern.split("*").map(s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$";
+       regex = new RegExp(regexPattern);
+       this.regexPatternCache.set(pattern, regex);
+    }
+    
+    return regex.test(value);
   }
 
   private isAllowed(auth: AuthKey, serverId: string, toolName: string): boolean {
