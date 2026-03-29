@@ -18,6 +18,7 @@ It is designed to be highly modular. By defining strict interfaces (`ISecretStor
 ### Features
 
 - **MCP Proxying**: Intercepts and routes MCP requests (`ListTools`, `CallTool`) seamlessly.
+- **Multi-Tenant BYO-MCP**: Tenants can define and securely connect their own private MCP servers (`mcpServers` isolated via `tenantId`) dynamically without gateway restarts.
 - **Multi-Transport Support**: Connects to downstream MCP servers via `stdio`, `sse`, or `http`.
 - **Authentication & Authorization**: Validates AI client credentials (`AI_ID`, `AI_KEY`) and enforces fine-grained permissions (Servers, Tools, Prompts, Resources) with wildcard (`*`) support for allow/deny lists.
 - **Strict Zod Validation & Typed Errors**: Boot configurations natively undergo Zod schema enforcement. All system faults are neatly categorized into HTTP-friendly Exception classes (e.g., `AuthenticationError`, `RateLimitExceededError`).
@@ -32,6 +33,7 @@ It is designed to be highly modular. By defining strict interfaces (`ISecretStor
 
 When integrating `aag-core` into SaaS, Multi-Tenant, or internet-exposed environments, host developers must adhere to the following constraints:
 - **Strictly Stateless Downstreams**: To conserve machine resources, `aag-core` multiplexes tool execution commands from different AI users (hitting the same MCP server ID) into the **same background process/connection**. Downstream MCP servers MUST NOT maintain state (e.g., user-specific chat histories or session databases) unless they securely isolate operations using an `aiId` injected into the tool arguments. Failure to ensure stateless tools may result in Cross-Tenant State Pollution.
+- **RCE Prevention (`allowStdio`)**: Host architectures configuring user-provided tools (BYO-MCP) are inherently susceptible to Remote Code Execution limits. You MUST set `allowStdio: false` in the system config to prevent SaaS tenants from manipulating `stdio` arguments into executing malicious sub-commands (e.g. `rm -rf`).
 - **SSRF Prevention on Config**: `ClientManager` connects blindly to any `url` mapped inside the `IConfigStore`. You must explicitly sanitize, validate, and restrict (e.g., blocking internal VPC ranges like `10.x.x.x` or AWS `169.254.x.x`) any user-provided URL configurations before writing them to the store.
 
 ### Installation
@@ -171,6 +173,7 @@ For detailed architectural information, please see [ARCHITECTURE.md](https://git
 ### 核心功能
 
 - **MCP 代理**: 無縫攔截和路由 MCP 請求（如 `ListTools`、`CallTool`）。
+- **多租戶自帶 MCP (BYO-MCP)**：支援 SaaS 服務下的每個租戶自定義私有 MCP 伺服器設定 (`mcpServers`)，依託 `tenantId` 做到 O(1) 等級的主機池連線自動隔離與重複收斂。
 - **多傳輸協定支援**: 可透過 `stdio`、`sse` 或 `http` 連接到下游的 MCP 伺服器。
 - **身分驗證與授權**: 驗證 AI 客戶端憑證（`AI_ID`、`AI_KEY`），並執行細粒度的伺服器、工具、提示詞 (Prompts) 與資源 (Resources) 權限控管（允許/拒絕清單，支援萬用字元 `*`）。
 - **Zod 嚴格校驗與型別錯誤生態系**: 所有的設定檔在實例化時皆需通過嚴苛的 Zod 架構解析，防堵任何異常屬性注入。同時核心全面採用 `AagError` 型別錯誤類別 (如 `AuthorizationError`)，讓外部 Host App 得以輕鬆擷取並實作 HTTP 狀態碼對映。
@@ -185,6 +188,7 @@ For detailed architectural information, please see [ARCHITECTURE.md](https://git
 
 當您將 `aag-core` 部署於 SaaS、多租戶 (Multi-Tenant) 或開放式網路環境時，宿主開發者 (Host Developers) 必須嚴格遵守以下架構限制：
 - **絕對無狀態的下游伺服器 (Strictly Stateless Downstreams)**：為了達成極致的效能與擴展性，如果多位不同的 AI 終端使用者請求相同的 MCP 伺服器 ID，`aag-core` 會將這些請求「多工多工 (Multiplex)」分派至**同一個底層背景程序或連線**。因此，下游的 MCP 工具必須是絕對無狀態的。如果下游工具本身持有狀態（例如記憶體快取或暫存資料庫），除非其嚴格透過 Payload 中的 `aiId` 進行隔離，否則將產生跨租戶資料外洩 (Cross-Tenant State Pollution) 的嚴重風險。
+- **防止遠端木馬命令執行防護 (RCE Prevention)**：假如您的 Host 服務擁抱了自帶擴充（BYO-MCP），因為租戶可以自行傳遞 MCP 註冊參數，這代表他們可以填寫諸如 `['rm', '-rf']` 這類參數於 `stdio` 內。為此您必須確保將 `allowStdio` 鐵門開關鎖死為 `false`，強制關閉本地行程註冊功能，避免整個核心被入侵。
 - **防範伺服器端請求偽造 (SSRF)**：`ClientManager` 會無條件連線至您 `IConfigStore` 提供的任何 `url`。在將這類使用者自訂或動態產生的連接埠套用至 Store 之前，您必須在您的應用程式層預先過濾並阻擋惡意的內部 IP（例如強制攔截針對 `169.254.169.254` 或是企業內網 `10.x.x.x` 的配置請求）。
 
 ### 安裝方式

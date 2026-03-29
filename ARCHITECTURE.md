@@ -135,6 +135,20 @@ flowchart TD
 
 ---
 
+### 6. `BYO-MCP` (Bring Your Own MCP) & `Tenant Scope Isolation`
+
+AAG-Core fully supports SaaS architectures where tenants can define their own private MCP servers, independently from the global `IConfigStore`.
+
+**Tenant Configuration Injection:**
+- The `AuthKey` schema dynamically accepts an `mcpServers` object and a `tenantId`.
+- During requests (`ListTools`, `CallTool`), `ProxyServer` seamlessly merges the globally mounted MCP servers with the tenant-specific MCP servers into a unified execution context.
+
+**O(1) Connection Pooling & RCE Protection:**
+- **`tenantId` Isolation**: To prevent thousands of identical LLM requests under the same tenant from launching thousands of redundant Node.js sub-processes, `ClientManager` isolates backend connection pools natively using `${tenantId}::${serverId}`. This enforces an extreme memory efficiency (O(1)) where multiple users representing the same tenant securely multiplex across a single backend connection.
+- **`allowStdio` RCE Gate**: Host architectures utilizing `BYO-MCP` are inherently susceptible to Remote Code Execution (RCE) if tenants inject malicious commands into `stdio` definitions. To mitigate this risk natively, the gateway exposes an `allowStdio` global lock (defaults to `false`), forcing all external tenant logic strictly through HTTP/SSE boundaries, preventing malicious sub-process forks.
+
+---
+
 <br/>
 <br/>
 
@@ -266,3 +280,19 @@ flowchart TD
     Plugin2 -->|從 context.auth 讀取個人專屬 Regex 法則| Regex(淨化輸入並修改 Payload)
     Regex --> CoreExec((最後才授權至底層引擎))
 ```
+
+---
+
+### 6. `BYO-MCP` (自帶 MCP) 與租戶隔離連線池 (Tenant Isolation)
+
+AAG-Core 全面支援 SaaS / PaaS 等級架構，讓平台上的「租戶 (Tenants)」能自定義私有的 MCP 伺服器，且與全域的 `IConfigStore` 開關並存且互不干擾。
+
+**租戶動態注入：**
+- 使用者的 `AuthKey` 在驗證時支援動態攜帶 `mcpServers` 物件結構與唯一的 `tenantId` 標籤。
+- 代理層在執行 (`ListTools` 列表查詢, `CallTool` 工具執行) 階段，會於空中「無感合併」全域伺服器與該租戶的私有伺服器，造就統一的執行層。
+
+**O(1) 連線共用與底層 RCE 防護機制：**
+- **`tenantId` 絕對隔離**：為了避免同一個公司的 10 萬名員工向同一個私有 MCP 發送請求時，產生了 10 萬個重疊子行程，`ClientManager` 會將 `${tenantId}::${serverId}` 作為主體實例的連線池 Key。這達到了變態級別的記憶體 O(1) 利用率，同個租約能安全地被多工（Multiplex）。
+- **`allowStdio` 命令防禦鎖**：開放與接受租戶「自帶伺服器」往往夾帶一個致命的資安隱患：遠端程式碼執行 (RCE)。如果租戶故意上傳惡意的 `stdio` 行程檔（像是直接寫死 `rm -rf /`），系統將引火自焚。為此，核心內建全域系統級的 `allowStdio` 鐵門（預設為 `false` 關閉）。在 SaaS 環境下，系統會無情拒絕租戶定義的本地進程，強制所有外部 MCP 路由經由標準且隔離好的 HTTP/SSE 協定發送，硬限制了容器防線。
+
+---
