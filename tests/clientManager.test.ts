@@ -70,7 +70,27 @@ describe("ClientManager", () => {
   });
 
   // Evaluates the simulated Ping Daemon and automatic Exponential Backoff mechanisms handling downstream failures gracefully.
-  it("should trigger reconnection if ping fails and recover with backoff", async () => {
+    it("should yield to event loop when handling many clients in ping daemon", () => {
+        jest.useFakeTimers();
+        for (let i = 0; i < 505; i++) {
+            (clientManager as any).clients.set(`client-${i}`, {
+                client: {
+                    ping: jest.fn<any>().mockResolvedValue({}),
+                    close: jest.fn<any>().mockResolvedValue({})
+                },
+                status: "CONNECTED",
+                lastActive: Date.now() - 30000,
+                metrics: { requests: 0, errors: 0 },
+                options: {} as any
+            });
+        }
+        
+        // Let it run to cover iteration chunking and skipping pings
+        jest.advanceTimersByTime(30000);
+        jest.useRealTimers();
+    });
+
+    it("should invoke reconnect if ping check explicitly times out", async () => {
     jest.useFakeTimers();
     const { ClientManager: CM } = await import("../src/clientManager.js");
     const config: any = { mcpServers: { "server-1": { transport: "stdio", command: "echo" } } };

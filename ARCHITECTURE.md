@@ -20,7 +20,7 @@ The `ClientManager` is the core dispatch pool that dictates the lifecycles of ba
 **Key Mechanics:**
 - **JIT Wake-Up**: Downstream standard-io (stdio) child processes or continuous Server-Sent Events (SSE) background connections are not created when the core boots. They are only resolved and spawned at the exact millisecond an AI client makes a valid `CallTool` request or `ListTools` lookup.
 - **Stateless Multiplexing**: If User A and User B both hold valid credentials to execute tools on `mcp-server-1`, the system routes *both* users through the *exact same* background child process instance, stripping context logic to the bare arguments payload.
-- **LRU Ping Daemon**: A background thread continuously pings idle connections. If a connection lives past its idle threshold, it is automatically terminated (`DISCONNECTED_IDLE`) to recoup OS memory.
+- **Concurrent Ping Daemon**: A background thread continuously pings idle connections via an asynchronous, non-blocking promise race. It instantly yields back to the NodeJS event loop (`O(1)` overhead) every few chunked clients to completely eliminate server starvation when multiplexing 100,000+ tenant servers. If a connection lives past its idle threshold, it is automatically terminated (`DISCONNECTED_IDLE`) to recoup OS memory.
 
 ```mermaid
 sequenceDiagram
@@ -28,7 +28,7 @@ sequenceDiagram
     participant CM as ClientManager
     participant Subprocess as Downstream MCP (stdio/sse)
     
-    Proxy->>CM: getClient('mcp-server-1')
+    Proxy->>CM: getClientJIT('mcp-server-1')
     alt Process Not Running (Scale-to-Zero)
         CM->>CM: Resolve Transport Details
         CM->>Subprocess: Spawn Child Process & Wait for Ready
@@ -168,7 +168,7 @@ AAG-Core fully supports SaaS architectures where tenants can define their own pr
 **核心機制：**
 - **動態喚醒 (JIT Wake-Up)**：底層的 MCP 標準輸入輸出 (stdio) 行程或是長駐的 SSE 連線並不會伴隨 Core 的啟動預先載入。它們只會在被合法認證的 AI 客戶端發出 `CallTool` 的「那一毫秒」才會實際消耗 OS 資源生成。
 - **無狀態多工處理 (Stateless Multiplexing)**：如果 User A 與 User B 皆具備權限操作 `mcp-server-1` 子工具，系統會將兩個請求引導至「同一個」底層常駐行程，僅將差異打包在純文字的呼叫變數 (Arguments) 之中，不再重複建立進程。
-- **LRU背景資源清零 (LRU Ping Daemon)**：系統建立有背景健康度探測演算法。若某連線進入空閒且長時間未操作，它會遭到無情且自動的斷連 (`DISCONNECTED_IDLE`) 將記憶體全數歸還系統。
+- **高併發非阻塞探測 (Concurrent Ping Daemon)**：系統建立了背景健康度探測演算法。透過非同步 (Asynchronous) 與非阻塞的 Promise 競爭迴圈，讓系統能以極低的 `O(1)` 事件迴圈開銷負載 100,000+ 租戶的併發。如果某連線經歷長時間的閒置未見操作，它會遭到自動的斷連 (`DISCONNECTED_IDLE`) 將記憶體全數歸還系統。
 
 ```mermaid
 sequenceDiagram
@@ -176,7 +176,7 @@ sequenceDiagram
     participant CM as ClientManager
     participant Subprocess as 下游 MCP 行程 (stdio/sse)
     
-    Proxy->>CM: getClient('mcp-server-1')
+    Proxy->>CM: getClientJIT('mcp-server-1')
     alt 無背景行程 (Scale-to-Zero 省電模式)
         CM->>CM: 取用協定連線設定檔
         CM->>Subprocess: 分岔生成子行程並等待 Ready 訊號

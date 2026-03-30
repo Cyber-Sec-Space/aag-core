@@ -33,6 +33,8 @@ export class ProxyServer {
   private authenticatedAiId: string | null = null;
   private disableEnvFallback: boolean = false;
   private middlewares: ProxyMiddleware[] = [];
+  private authCache: Map<string, { auth: AuthKey; expiresAt: number }> = new Map();
+  private authCacheTTL = 60000;
 
   constructor(
       clientManager: ClientManager, 
@@ -70,11 +72,17 @@ export class ProxyServer {
 
   private async validateAuth(request: any, extra?: any): Promise<AuthKey> {
     if (this.authenticatedAiId) {
-        const auth = await this.authStore.getIdentity(this.authenticatedAiId);
+        let auth: AuthKey | null | undefined = this.authCache.get(this.authenticatedAiId)?.auth;
+        if (!auth || (this.authCache.get(this.authenticatedAiId)!.expiresAt <= Date.now())) {
+            auth = await this.authStore.getIdentity(this.authenticatedAiId);
+            if (auth) this.authCache.set(this.authenticatedAiId, { auth, expiresAt: Date.now() + this.authCacheTTL });
+        }
+
         if (!auth) {
             throw new AuthenticationError(`Session constructed with bound AI ID '${this.authenticatedAiId}' but no matching identity profile found.`);
         }
         if (auth.revoked) {
+            this.authCache.delete(this.authenticatedAiId);
             throw new AuthenticationError(`Key for AI ID '${this.authenticatedAiId}' has been revoked.`);
         }
         return auth;
@@ -93,7 +101,11 @@ export class ProxyServer {
       throw new AuthenticationError("Authentication required: Please provide AI_ID and AI_KEY in environment variables.");
     }
 
-    const auth = await this.authStore.getIdentity(aiid);
+    let auth: AuthKey | null | undefined = this.authCache.get(aiid)?.auth;
+    if (!auth || (this.authCache.get(aiid)!.expiresAt <= Date.now())) {
+        auth = await this.authStore.getIdentity(aiid);
+        if (auth) this.authCache.set(aiid, { auth, expiresAt: Date.now() + this.authCacheTTL });
+    }
 
     if (!auth) {
       this.logger.warn("Proxy", `Authentication failed: Invalid AIID '${aiid}'`);
@@ -101,6 +113,7 @@ export class ProxyServer {
     }
 
     if (auth.revoked) {
+      this.authCache.delete(aiid);
       this.logger.warn("Proxy", `Authentication failed: AI ID '${aiid}' is revoked`);
       throw new AuthenticationError(`Key for AI ID '${aiid}' has been revoked.`);
     }
@@ -189,16 +202,20 @@ export class ProxyServer {
       let targetServerId: string | null = null;
       let actualToolName: string | null = null;
       
-      const globalServers = Object.keys(this.configStore.getConfig()?.mcpServers || {});
-      const tenantServers = Object.keys(auth.mcpServers || {});
-      const servers = Array.from(new Set([...globalServers, ...tenantServers]));
-
-      for (const serverId of servers) {
-        const prefix = `${serverId}___`;
-        if (requestedName.startsWith(prefix)) {
-          targetServerId = serverId;
-          actualToolName = requestedName.substring(prefix.length);
-          break;
+      const prefixIndex = requestedName.indexOf("___");
+      if (prefixIndex > 0) {
+        const parsedServerId = requestedName.substring(0, prefixIndex);
+        
+        // Fast O(1) existence check semantics
+        const globalServers = this.configStore.getConfig()?.mcpServers || {};
+        const tenantServers = auth.mcpServers || {};
+        
+        const existsGlobal = parsedServerId in globalServers;
+        const existsTenant = parsedServerId in tenantServers;
+        
+        if (existsGlobal || existsTenant) {
+            targetServerId = parsedServerId;
+            actualToolName = requestedName.substring(prefixIndex + 3);
         }
       }
 

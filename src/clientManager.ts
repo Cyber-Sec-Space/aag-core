@@ -48,9 +48,16 @@ export class ClientManager {
   }
 
   private startPingDaemon() {
-    this.pingInterval = setInterval(() => {
+    this.pingInterval = setInterval(async () => {
       const now = Date.now();
+      let iterationCount = 0;
+
       for (const [id, managed] of this.clients.entries()) {
+        iterationCount++;
+        if (iterationCount % 500 === 0) {
+            await new Promise(r => setImmediate(r));
+        }
+
         if (managed.status === "CONNECTED" && managed.client) {
           
           if (now - managed.lastAccessed > this.idleTimeoutMs) {
@@ -64,6 +71,10 @@ export class ClientManager {
                  this.clients.delete(id);
              }
              continue;
+          }
+
+          if (now - managed.lastAccessed < (this.pingIntervalMs / 2)) {
+              continue;
           }
 
           const pingPromise = managed.client.ping();

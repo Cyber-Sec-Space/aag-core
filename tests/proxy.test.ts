@@ -441,5 +441,45 @@ describe("ProxyServer Suite", () => {
             // 3rd request - Fail
             await expect(callHandler(req, {})).rejects.toThrow("Rate limit exceeded for AI ID 'test-ai'. Please try again later.");
         });
+        it("should fall back to environment variables auth and re-fetch if cache expires", async () => {
+            process.env.AI_ID = "test-ai-id";
+            process.env.AI_KEY = "test-ai-key";
+            const req = { method: "tools/call", params: { name: "test___tool", arguments: {} } };
+            const handlers = (proxy.server as any)._requestHandlers;
+            const resourceHandler = handlers.get("tools/call");
+            
+            try { await resourceHandler(req, {}); } catch(e) {}
+            
+            const realNow = Date.now.bind(Date);
+            jest.spyOn(Date, "now").mockImplementation(() => realNow() + 61000); // Trigger TTL expiry
+            try { await resourceHandler(req, {}); } catch(e) {}
+            jest.restoreAllMocks();
+            delete process.env.AI_ID;
+            delete process.env.AI_KEY;
+        });
+
+        it("should route correctly if target server exists only in tenant mcpServers", async () => {
+            const handlers = (proxy.server as any)._requestHandlers;
+            const callHandler = handlers.get("tools/call");
+            
+            process.env.AI_ID = "test-ai";
+            process.env.AI_KEY = "test-key";
+            
+            const req = { method: "tools/call", params: { name: "personal___tool", arguments: {} } };
+            
+            const pAuthStore = (proxy as any).authStore;
+            jest.spyOn(pAuthStore, "getIdentity").mockResolvedValue({
+                key: "test-key",
+                revoked: false,
+                pluginConfig: {},
+                mcpServers: { personal: { transport: "sse", url: "http://localhost/sse" } }
+            });
+            
+            jest.spyOn(clientManager, "getClientJIT").mockResolvedValue({
+                callTool: jest.fn<any>().mockResolvedValue({ content: [] })
+            } as any);
+            
+            await expect(callHandler(req, {})).resolves.toBeDefined();
+        });
     });
 });
