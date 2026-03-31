@@ -426,12 +426,18 @@ export class ClientManager {
     return map;
   }
   
-  public destroy() {
+  public async destroy() {
      this.isDestroyed = true;
      if (this.sweepTimer) clearTimeout(this.sweepTimer);
-     for (const id of this.clients.keys()) {
-         /* istanbul ignore next - Error already swallowed by removeClient */
-         this.removeClient(id).catch(()=>{});
+     
+     const keys = Array.from(this.clients.keys());
+     const chunkSize = 50;
+     for (let i = 0; i < keys.length; i += chunkSize) {
+         const chunk = keys.slice(i, i + chunkSize);
+         await Promise.allSettled(chunk.map(async id => {
+             /* istanbul ignore next - Error already swallowed by removeClient */
+             await this.removeClient(id).catch(()=>{});
+         }));
      }
   }
 }

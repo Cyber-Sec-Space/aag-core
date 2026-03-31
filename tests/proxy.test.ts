@@ -64,8 +64,8 @@ describe("ProxyServer Suite", () => {
         );
     });
 
-    afterEach(() => {
-        if (clientManager) clientManager.destroy();
+    afterEach(async () => {
+        if (clientManager) await clientManager.destroy();
         jest.clearAllMocks();
         delete process.env.AI_ID;
         delete process.env.AI_KEY;
@@ -539,6 +539,35 @@ describe("ProxyServer Suite", () => {
             expect((p as any).matchPattern("test1", "pattern1*")).toBe(false);
             expect((p as any).matchPattern("test2", "pattern2*")).toBe(false);
             expect((p as any).regexPatternCache.size).toBe(1);
+            p.destroy();
+        });
+
+        it("should evict auth cache in ProxyServer when max size is hit", async () => {
+             const customConfig = new MockConfigStore({
+                system: { authCacheSize: 1, pingIntervalMs: 10000, pingTimeoutMs: 5000, idleTimeoutMs: 600000, reconnectTimeoutMs: 30000, allowStdio: false },
+                mcpServers: {},
+                aiKeys: {
+                    user1: { key: "k1" },
+                    user2: { key: "k2" }
+                }
+            } as any);
+            const p = new ProxyServer(
+                new ClientManager(customConfig, new MockSecretStore(), new MockLogger()), 
+                customConfig, 
+                new MockSecretStore(),
+                new ConfigAuthStore(customConfig), 
+                new MockLogger()
+            );
+            
+            process.env.AI_ID = "user1"; process.env.AI_KEY = "k1";
+            await (p as any).validateAuth({ params: {} });
+            (p as any).authenticatedAiId = null; // Clear cached session context
+            process.env.AI_ID = "user2"; process.env.AI_KEY = "k2";
+            await (p as any).validateAuth({ params: {} });
+            
+            // Due to size=1, first user is evicted
+            expect((p as any).authCache.size).toBe(1);
+            expect((p as any).authCache.has("user2")).toBe(true);
             p.destroy();
         });
     });

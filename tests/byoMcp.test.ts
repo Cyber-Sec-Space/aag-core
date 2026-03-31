@@ -59,8 +59,8 @@ describe("BYO-MCP Tenant Isolation & Security", () => {
         });
     });
 
-    afterEach(() => {
-        clientManager.destroy();
+    afterEach(async () => {
+        await clientManager.destroy();
         jest.clearAllMocks();
     });
 

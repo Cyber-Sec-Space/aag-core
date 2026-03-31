@@ -9,10 +9,13 @@ export class SessionManager {
      * Each Active Session registers a callback to forcibly close its transport/connection.
      */
     private activeSessions: Map<string, Set<() => void>> = new Map();
-    private maxConcurrentSessions: number = 1000;
+
+    private get maxConcurrentSessions(): number {
+        return this.configStore?.getConfig()?.system?.maxConcurrentSessions ?? 10000;
+    }
 
     /**
-     * @param configStore Deprecated in v2.2.0. Pass null or any IConfigStore. Config sync is now decoupled.
+     * @param configStore Optional ConfigStore. Overrides maxConcurrentSessions dynamically.
      * @param logger The audit logger instance.
      */
     constructor(private configStore: IConfigStore | null, private logger: IAuditLogger) {

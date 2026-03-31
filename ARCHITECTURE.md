@@ -244,7 +244,7 @@ sequenceDiagram
 
 為此提供的 `SessionManager`：
 - 利用弱層級別的記憶紀錄所有活躍的底層 TCP Socket 連線。
-- 實現了軟併發限制 (`maxConcurrentSessions` 預設 1000)，如客戶端惡意超發 Slowloris 連線（例如：同時掛起 5000 個未關閉 Session），將主動回傳 HTTP 429 `RateLimitExceededError` 截斷請求，保護作業系統 File Descriptor。
+- 實現了軟併發限制 (`maxConcurrentSessions` 預設 10000)，如客戶端惡意超發 Slowloris 連線（例如：同時掛起 50000 個未關閉 Session），將主動回傳 HTTP 429 `RateLimitExceededError` 截斷請求，保護作業系統 File Descriptor。
 - 給予應用實例化程式一個終止介入點 (`SessionManager.disconnectSession(aiId)`)
 - 尋找符合的使用者直接由 Node.js 深處發送銷毀命令 (Socket End)。
 

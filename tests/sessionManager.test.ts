@@ -25,11 +25,12 @@ describe("SessionManager", () => {
     });
 
     it("should throw RateLimitExceededError when maxConcurrentSessions is exceeded", () => {
-        const manager = new SessionManager(configStore, logger);
+        const boundConfigStore = new MockConfigStore({ system: { maxConcurrentSessions: 10 }, mcpServers: {} } as any);
+        const manager = new SessionManager(boundConfigStore, logger);
         const aiId = "ai_flood";
         const fns: (() => void)[] = [];
         
-        for (let i = 0; i < 1000; i++) {
+        for (let i = 0; i < 10; i++) {
             fns.push(manager.registerSession(aiId, () => {}));
         }
 

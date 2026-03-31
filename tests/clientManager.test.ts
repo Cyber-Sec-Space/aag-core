@@ -35,8 +35,8 @@ describe("ClientManager", () => {
     jest.clearAllMocks();
   });
   
-  afterEach(() => {
-    if (clientManager) clientManager.destroy();
+  afterEach(async () => {
+    if (clientManager) await clientManager.destroy();
     jest.useRealTimers();
     jest.clearAllMocks();
   });
@@ -372,11 +372,11 @@ describe("ClientManager", () => {
           reconnectAttempts: 0
       });
       
-      expect(() => clientManager.destroy()).not.toThrow();
+      await expect(clientManager.destroy()).resolves.not.toThrow();
       
       // Hit the undefined sweepTimer branch
       (clientManager as any).sweepTimer = undefined;
-      expect(() => clientManager.destroy()).not.toThrow();
+      await expect(clientManager.destroy()).resolves.not.toThrow();
   });
 
   it("should return null for unsupported transports triggering boot throw", async () => {
@@ -470,7 +470,7 @@ describe("ClientManager", () => {
       clientManager = new CM(new MockConfigStore({mcpServers: {}} as any), new MockSecretStore(), new MockLogger());
       clearInterval((clientManager as any).pingInterval);
       (clientManager as any).pingInterval = undefined;
-      clientManager.destroy();
+      await clientManager.destroy();
   });
 
   it("should safely skip map setting for null clients inside getClientsJIT pool", async () => {
@@ -555,7 +555,7 @@ describe("ClientManager", () => {
       managed.status = "DISCONNECTED";
       
       (clientManager as any).triggerReconnect("ghost");
-      clientManager.destroy(); 
+      await clientManager.destroy(); 
       
       await managed.connectingPromise; 
   });
@@ -573,7 +573,7 @@ describe("ClientManager", () => {
       (clientManager as any).triggerReconnect("catch_test");
       
       // Destroy so timeouts don't hang
-      clientManager.destroy();
+      await clientManager.destroy();
   });
 
   it("should securely execute catch callbacks natively handling thrown close failures during idle eviction", async () => {
@@ -593,7 +593,7 @@ describe("ClientManager", () => {
       // Status should be disconnected idle and catch block fully traversed
       expect(managed.status).toBe("DISCONNECTED_IDLE");
       jest.useRealTimers();
-      clientManager.destroy();
+      await clientManager.destroy();
   });
 
   it("should securely execute catch callback natively handling thrown failures during total lifecycle destruction", async () => {
@@ -605,6 +605,6 @@ describe("ClientManager", () => {
       jest.spyOn(clientManager as any, "removeClient").mockRejectedValue(new Error("Internal Destructor Bypass Error"));
       
       // Executes line 301 catch block internally
-      clientManager.destroy();
+      await clientManager.destroy();
   });
 });

@@ -87,12 +87,26 @@ export class ProxyServer {
       this.logger.info("Proxy", "Registered custom ProxyMiddleware interceptor.");
   }
 
+  private cacheAuth(id: string, auth: AuthKey) {
+      if (this.authCache.has(id)) {
+          this.authCache.delete(id);
+      } else {
+          const maxSize = this.configStore.getConfig()?.system?.authCacheSize ?? 10000;
+          if (this.authCache.size >= maxSize) {
+              const firstKey = this.authCache.keys().next().value;
+              /* istanbul ignore next - Generator boundary protection */
+              if (firstKey !== undefined) this.authCache.delete(firstKey);
+          }
+      }
+      this.authCache.set(id, { auth, expiresAt: Date.now() + this.authCacheTTL });
+  }
+
   private async validateAuth(request: any, extra?: any): Promise<AuthKey> {
     if (this.authenticatedAiId) {
         let auth: AuthKey | null | undefined = this.authCache.get(this.authenticatedAiId)?.auth;
         if (!auth || (this.authCache.get(this.authenticatedAiId)!.expiresAt <= Date.now())) {
             auth = await this.authStore.getIdentity(this.authenticatedAiId);
-            if (auth) this.authCache.set(this.authenticatedAiId, { auth, expiresAt: Date.now() + this.authCacheTTL });
+            if (auth) this.cacheAuth(this.authenticatedAiId, auth);
         }
 
         if (!auth) {
@@ -122,7 +136,7 @@ export class ProxyServer {
     /* istanbul ignore next - Covered conceptually via caching suite */
     if (!auth || (this.authCache.get(aiid)!.expiresAt <= Date.now())) {
         auth = await this.authStore.getIdentity(aiid);
-        if (auth) this.authCache.set(aiid, { auth, expiresAt: Date.now() + this.authCacheTTL });
+        if (auth) this.cacheAuth(aiid, auth);
     }
 
     if (!auth) {

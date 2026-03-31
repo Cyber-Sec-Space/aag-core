@@ -70,7 +70,9 @@ export const SystemConfigSchema = z.object({
   pingTimeoutMs: z.number().int().positive().optional().default(5000),
   idleTimeoutMs: z.number().int().positive().optional().default(300000),
   reconnectTimeoutMs: z.number().int().positive().optional().default(5000),
-  regexCacheSize: z.number().int().positive().optional().default(10000)
+  regexCacheSize: z.number().int().positive().optional().default(10000),
+  authCacheSize: z.number().int().positive().optional().default(10000),
+  maxConcurrentSessions: z.number().int().positive().optional().default(10000)
 });
 
 export const PluginConfigSchema = z.object({
