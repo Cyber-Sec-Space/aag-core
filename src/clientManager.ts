@@ -117,32 +117,41 @@ export class ClientManager {
     const currentServerIds = new Set(this.globalServerIds);
     const newServerIds = new Set(Object.keys(parsedConfig.mcpServers));
 
-    const removals: Promise<void>[] = [];
+    const removals: (() => Promise<void>)[] = [];
     for (const id of currentServerIds) {
       if (!newServerIds.has(id)) {
-        removals.push(this.removeClient(id));
+        removals.push(() => this.removeClient(id));
       }
     }
-    await Promise.allSettled(removals);
+
+    const chunkSize = 50;
+    for (let i = 0; i < removals.length; i += chunkSize) {
+        const chunk = removals.slice(i, i + chunkSize);
+        await Promise.allSettled(chunk.map(fn => fn()));
+    }
 
     this.globalServerIds.clear();
 
-    const additions: Promise<void>[] = [];
+    const additions: (() => Promise<void>)[] = [];
     for (const [id, serverConfig] of Object.entries(parsedConfig.mcpServers)) {
       this.globalServerIds.add(id);
       if (currentServerIds.has(id)) {
         const existing = this.clients.get(id);
         if (JSON.stringify(existing?.config) !== JSON.stringify(serverConfig)) {
-           additions.push((async () => {
+           additions.push(async () => {
               await this.removeClient(id);
               await this.addClient(id, serverConfig as McpServerConfig);
-           })());
+           });
         }
       } else {
-        additions.push(this.addClient(id, serverConfig as McpServerConfig));
+        additions.push(() => this.addClient(id, serverConfig as McpServerConfig));
       }
     }
-    await Promise.allSettled(additions);
+
+    for (let i = 0; i < additions.length; i += chunkSize) {
+        const chunk = additions.slice(i, i + chunkSize);
+        await Promise.allSettled(chunk.map(fn => fn()));
+    }
   }
 
   private triggerReconnect(id: string) {

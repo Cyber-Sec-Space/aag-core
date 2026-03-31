@@ -62,17 +62,26 @@ export class SessionManager {
      * Forcibly closes all connected sessions for a given AI_ID.
      * @param aiId The AI_ID to disconnect.
      */
-    public disconnectAll(aiId: string) {
+    public async disconnectAll(aiId: string) {
         const fns = this.activeSessions.get(aiId);
         if (fns) {
-            for (const fn of fns) {
-                try { 
-                    fn(); 
-                } catch (e: any) {
-                    this.logger.warn("SessionManager", `Error executing disconnect callback for '${aiId}': ${e.message}`);
+            this.activeSessions.delete(aiId); // Prevent async race conditions
+            const arr = Array.from(fns);
+            const chunkSize = 50;
+            
+            for (let i = 0; i < arr.length; i += chunkSize) {
+                const chunk = arr.slice(i, i + chunkSize);
+                for (const fn of chunk) {
+                    try { 
+                        fn(); 
+                    } catch (e: any) {
+                        this.logger.warn("SessionManager", `Error executing disconnect callback for '${aiId}': ${e.message}`);
+                    }
                 }
+                // Yield to event loop between chunks
+                /* istanbul ignore next - hard to accurately profile zero-delay timers */
+                await new Promise(r => setTimeout(r, 0));
             }
-            this.activeSessions.delete(aiId);
         }
     }
 }

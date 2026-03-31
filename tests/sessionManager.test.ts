@@ -42,12 +42,12 @@ describe("SessionManager", () => {
         fns.forEach(unreg => unreg());
     });
 
-    it("should allow registering and unregistering sessions", () => {
+    it("should allow registering and unregistering sessions", async () => {
         const manager = new SessionManager(configStore, logger);
         const disconnectFn = jest.fn();
 
         const unregister = manager.registerSession("ai-id-1", disconnectFn);
-        manager.disconnectAll("ai-id-1");
+        await manager.disconnectAll("ai-id-1");
         expect(disconnectFn).toHaveBeenCalledTimes(1);
 
         disconnectFn.mockClear();
@@ -55,14 +55,14 @@ describe("SessionManager", () => {
         // Registration after unregister
         const unregister2 = manager.registerSession("ai-id-1", disconnectFn);
         unregister2(); // Remove it cleanly
-        manager.disconnectAll("ai-id-1");
+        await manager.disconnectAll("ai-id-1");
         expect(disconnectFn).not.toHaveBeenCalled();
         
         // Unregister multiple times safely
         unregister2();
     });
 
-    it("should execute multiple disconnect functions on disconnectAll", () => {
+    it("should execute multiple disconnect functions on disconnectAll", async () => {
         const manager = new SessionManager(configStore, logger);
         const disconnect1 = jest.fn();
         const disconnect2 = jest.fn();
@@ -70,17 +70,17 @@ describe("SessionManager", () => {
         manager.registerSession("ai-id-2", disconnect1);
         manager.registerSession("ai-id-2", disconnect2);
 
-        manager.disconnectAll("ai-id-2");
+        await manager.disconnectAll("ai-id-2");
 
         expect(disconnect1).toHaveBeenCalledTimes(1);
         expect(disconnect2).toHaveBeenCalledTimes(1);
         
         // Calling again should do nothing since it's deleted
-        manager.disconnectAll("ai-id-2");
+        await manager.disconnectAll("ai-id-2");
         expect(disconnect1).toHaveBeenCalledTimes(1);
     });
 
-    it("should gracefully handle errors thrown by disconnect callbacks", () => {
+    it("should gracefully handle errors thrown by disconnect callbacks", async () => {
         const manager = new SessionManager(configStore, logger);
         const disconnectFail = jest.fn().mockImplementation(() => {
             throw new Error("Test disconnect error");
@@ -91,7 +91,7 @@ describe("SessionManager", () => {
         manager.registerSession("ai-id-3", disconnectFail);
         manager.registerSession("ai-id-3", disconnectSuccess);
 
-        manager.disconnectAll("ai-id-3");
+        await manager.disconnectAll("ai-id-3");
 
         expect(disconnectFail).toHaveBeenCalledTimes(1);
         expect(disconnectSuccess).toHaveBeenCalledTimes(1); // Should still execute the rest
@@ -121,11 +121,11 @@ describe("SessionManager", () => {
         expect((manager as any).activeSessions.has("multi-session")).toBe(false);
     });
 
-    it("should safely handle unregistering a session after disconnectAll has wiped the map natively", () => {
+    it("should safely handle unregistering a session after disconnectAll has wiped the map natively", async () => {
         const manager = new SessionManager(configStore, logger);
         const disconnectFn = jest.fn();
         const unregister = manager.registerSession("ai-id-wiped", disconnectFn);
-        manager.disconnectAll("ai-id-wiped"); 
+        await manager.disconnectAll("ai-id-wiped"); 
         unregister();  
         expect((manager as any).activeSessions.has("ai-id-wiped")).toBe(false);
     });

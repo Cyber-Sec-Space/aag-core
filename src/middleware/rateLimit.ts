@@ -33,7 +33,11 @@ export class RateLimitMiddleware implements ProxyMiddleware {
     let currentWindowMs = this.windowMs;
 
     // Recalculate rate if config exists explicitly for this identity
-    if (context.auth?.rateLimit?.rpm !== undefined) {
+    const pluginCfg = context.auth?.pluginConfig?.["aag-core-rate-limit"];
+    if (pluginCfg) {
+      if (pluginCfg.maxRequests !== undefined) currentMax = pluginCfg.maxRequests;
+      if (pluginCfg.windowMs !== undefined) currentWindowMs = pluginCfg.windowMs;
+    } else if (context.auth?.rateLimit?.rpm !== undefined) {
       currentMax = context.auth.rateLimit.rpm;
       currentWindowMs = 60000;
     } else if (context.auth?.rateLimit?.rph !== undefined) {

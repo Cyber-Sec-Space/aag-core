@@ -15,9 +15,13 @@ export class MemoryStateStore implements IStateStore {
     async set(key: string, value: any): Promise<void> {
         this.store.set(key, value);
         if (this.store.size > this.maxKeys) {
-            const firstKey = this.store.keys().next().value;
-            /* istanbul ignore next */
-            if (firstKey !== undefined) this.store.delete(firstKey);
+            const clearCount = Math.max(1, Math.floor(this.maxKeys * 0.10));
+            let count = 0;
+            for (const k of this.store.keys()) {
+                this.store.delete(k);
+                count++;
+                if (count >= clearCount) break;
+            }
         }
     }
 }

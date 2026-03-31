@@ -75,6 +75,26 @@ describe("RateLimitMiddleware Suite", () => {
     }
     await expect(limiter.onRequest(slowCtx, {})).rejects.toThrow();
   });
+
+  it("should prioritize pluginConfig over legacy rateLimit schema fields", async () => {
+    const limiter = new RateLimitMiddleware(2, 60000);
+
+    const overrideCtx: any = { 
+        aiId: "plugin-user", 
+        serverId: "test", 
+        toolName: "test", 
+        auth: { 
+            rateLimit: { rpm: 1 }, // Legacy should be ignored
+            pluginConfig: { "aag-core-rate-limit": { maxRequests: 5, windowMs: 1000 } } 
+        } 
+    };
+
+    // Should get 5 bursts, not 1, not 2
+    for(let i=0; i<5; i++) {
+        await expect(limiter.onRequest(overrideCtx, {})).resolves.toEqual({});
+    }
+    await expect(limiter.onRequest(overrideCtx, {})).rejects.toThrow();
+  });
 });
 
 import { RateLimitPlugin } from "../src/middleware/rateLimit.js";
