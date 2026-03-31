@@ -1,10 +1,12 @@
 import { jest } from '@jest/globals';
 import { ClientManager } from '../src/clientManager.js';
-import { IConfigStore, ISecretStore, IAuditLogger } from '../src/interfaces/index.js';
+import { IConfigStore } from '../src/interfaces/IConfigStore.js';
+import { ISecretStore } from '../src/interfaces/ISecretStore.js';
+import { IAuditLogger } from '../src/interfaces/IAuditLogger.js';
 import { AuthKey, ProxyConfig } from '../src/config/types.js';
 
 class MockConfigStore implements IConfigStore {
-  getConfig = jest.fn<() => ProxyConfig>().mockReturnValue({
+  getConfig = jest.fn<() => any>().mockReturnValue({
     system: { port: 3000, logLevel: "INFO", allowStdio: false },
     mcpServers: {
       global_server: { transport: "stdio", command: "echo", args: ["global"] }
@@ -42,7 +44,8 @@ describe("BYO-MCP Tenant Isolation & Security", () => {
         clientManager = new ClientManager(configStore, secretStore, logger);
 
         // Safely mock out actual connections to just return an object
-        jest.spyOn(clientManager as any, "createTransportAndConnect").mockImplementation(async (id: string, config: any, isTenant: boolean) => {
+        jest.spyOn(clientManager as any, "createTransportAndConnect").mockImplementation(async (...args: any[]) => {
+            const [id, config, isTenant] = args;
             // Re-implement the security check normally handled here,,
             if (config.transport === "stdio" && isTenant && !configStore.getConfig().system?.allowStdio) {
                 const { AagConfigurationError } = await import("../src/errors.js");
@@ -108,7 +111,7 @@ describe("BYO-MCP Tenant Isolation & Security", () => {
         } as any);
         clientManager = new ClientManager(configStore, secretStore, logger);
         
-        jest.spyOn(clientManager as any, "createTransportAndConnect").mockImplementation(async (id: any, config: any, isTenant: boolean) => {
+        jest.spyOn(clientManager as any, "createTransportAndConnect").mockImplementation(async (...args: any[]) => {
             return {
                 ping: jest.fn().mockResolvedValue(true as never),
                 close: jest.fn().mockResolvedValue(true as never),

@@ -49,8 +49,11 @@ describe("ProxyServer Suite", () => {
             client: mockGithubClient,
             config: configData.mcpServers["github"],
             status: "CONNECTED",
-            reconnectAttempts: 0
+            lastAccessed: Date.now(),
+            reconnectAttempts: 0,
+            isTenantContext: false
         });
+        (clientManager as any).globalServerIds.add("github");
 
         proxy = new ProxyServer(
             clientManager,

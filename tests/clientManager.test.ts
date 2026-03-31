@@ -327,11 +327,12 @@ describe("ClientManager", () => {
     // Force ping to reject. Next interval should catch
     (client as any).ping.mockRejectedValueOnce(new Error("Ping failed"));
     
-    await jest.advanceTimersByTimeAsync(30000);
+    // Advance to 16000ms, which triggers the continuous sweep ping criteria (>= 15000)
+    await jest.advanceTimersByTimeAsync(16000);
     expect(clientManager.getClientStatus("ping-server")).toBe("RECONNECTING");
 
-    // Advance to process the 1st backoff attempt
-    await jest.advanceTimersByTimeAsync(2000);
+    // Advance to process the 1st backoff attempt (5000ms)
+    await jest.advanceTimersByTimeAsync(5000);
     expect(clientManager.getClientStatus("ping-server")).toBe("CONNECTED");
 
     // Retrieve the newly rotated client instance and force it to fail
@@ -339,7 +340,7 @@ describe("ClientManager", () => {
     (newClient as any).ping.mockRejectedValueOnce(new Error("Ping failed 2"));
 
     (clientManager as any).createTransportAndConnect = jest.fn<any>().mockResolvedValue(null);
-    await jest.advanceTimersByTimeAsync(30000);
+    await jest.advanceTimersByTimeAsync(16000); // Trigger ping again
     // Because it fails forever, it will recursively stay in RECONNECTING states and scale backoffs
     expect(clientManager.getClientStatus("ping-server")).toBe("RECONNECTING");
     

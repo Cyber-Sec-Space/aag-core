@@ -24,10 +24,11 @@ export interface ManagedClient {
 
 export class ClientManager {
   private clients: Map<string, ManagedClient> = new Map();
+  private globalServerIds: Set<string> = new Set();
   private configStore: IConfigStore;
   private secretStore: ISecretStore;
   private logger: IAuditLogger;
-  private pingInterval: ReturnType<typeof setInterval> | null = null;
+  private sweepTimer: ReturnType<typeof setTimeout> | null = null;
   private isDestroyed = false;
   private idleTimeoutMs: number;
 
@@ -47,54 +48,58 @@ export class ClientManager {
     this.startPingDaemon();
   }
 
-  private startPingDaemon() {
-    this.pingInterval = setInterval(async () => {
-      const now = Date.now();
-      let iterationCount = 0;
+  private async sweepLoop() {
+    if (this.isDestroyed) return;
+    let processed = 0;
 
-      for (const [id, managed] of this.clients.entries()) {
-        iterationCount++;
-        /* istanbul ignore next - Fake timers block microtask resolution natively */
-        if (iterationCount % 500 === 0) {
-            await new Promise(r => setImmediate(r));
+    for (const [id, managed] of this.clients.entries()) {
+      if (this.isDestroyed) return;
+      const now = Date.now();
+      processed++;
+
+      if (managed.status === "CONNECTED" && managed.client) {
+        if (now - managed.lastAccessed > this.idleTimeoutMs) {
+            this.logger.info("ClientManager", `Evicting idle downstream client ${id} to save resources.`);
+            managed.status = "DISCONNECTED_IDLE";
+            managed.client.close().catch(()=>{});
+            managed.client = null;
+            if (managed.isTenantContext) this.clients.delete(id);
+            continue;
         }
 
-        if (managed.status === "CONNECTED" && managed.client) {
-          
-          if (now - managed.lastAccessed > this.idleTimeoutMs) {
-             this.logger.info("ClientManager", `Evicting idle downstream client ${id} to save resources.`);
-             managed.status = "DISCONNECTED_IDLE";
-             managed.client.close().catch(()=>{});
-             managed.client = null;
-             
-             // Dynamic tenant clients are ephemeral; fully remove if idle
-             if (managed.isTenantContext) {
-                 this.clients.delete(id);
-             }
-             continue;
-          }
-
-          /* istanbul ignore next - Offset lastAccessed timing is skipped by FakeTimers */
-          if (now - managed.lastAccessed < (this.pingIntervalMs / 2)) {
-              continue;
-          }
-
-          const pingPromise = managed.client.ping();
-          const timeoutPromise = new Promise<void>((_, reject) => setTimeout(() => reject(new Error("Ping timeout")), this.pingTimeoutMs));
-          
-          Promise.race([pingPromise, timeoutPromise]).catch((e: any) => {
-            if (this.clients.get(id)?.status === "CONNECTED") {
-               this.logger.warn("ClientManager", `Client ${id} failed ping check: ${e.message}. Triggering reconnect.`);
-               this.triggerReconnect(id);
-            }
-          });
+        /* istanbul ignore next - Offset lastAccessed timing is skipped by FakeTimers */
+        if (now - managed.lastAccessed >= (this.pingIntervalMs / 2)) {
+            const pingPromise = managed.client.ping();
+            const timeoutPromise = new Promise<void>((_, reject) => setTimeout(() => reject(new Error("Ping timeout")), this.pingTimeoutMs));
+            Promise.race([pingPromise, timeoutPromise]).catch((e: any) => {
+              if (this.clients.get(id)?.status === "CONNECTED") {
+                 this.logger.warn("ClientManager", `Client ${id} failed ping check: ${e.message}. Triggering reconnect.`);
+                 this.triggerReconnect(id);
+              }
+            });
         }
       }
-    }, this.pingIntervalMs);
-    /* istanbul ignore next */
-    if (this.pingInterval?.unref) {
-      this.pingInterval.unref();
+
+      /* istanbul ignore next - Adaptive sweeping yields */
+      if (processed % 50 === 0) {
+          const totalClients = Math.max(this.clients.size, 1);
+          const sliceMs = Math.max(2, Math.min(500, this.pingIntervalMs / (totalClients / 50)));
+          await new Promise(resolve => {
+              this.sweepTimer = setTimeout(resolve, sliceMs);
+          });
+          if (this.isDestroyed) return;
+      }
     }
+
+    if (!this.isDestroyed) {
+        this.sweepTimer = setTimeout(() => this.sweepLoop(), 2000);
+        /* istanbul ignore next */
+        if (this.sweepTimer?.unref) this.sweepTimer.unref();
+    }
+  }
+
+  private startPingDaemon() {
+      this.sweepLoop();
   }
 
   public async syncConfig(config: ProxyConfig) {
@@ -106,11 +111,7 @@ export class ClientManager {
         throw new AagConfigurationError("Proxy Configuration Schema is invalid during syncConfig", e.errors);
     }
     
-    const currentServerIds = new Set(
-        Array.from(this.clients.entries())
-        .filter(([_, m]) => !m.isTenantContext)
-        .map(([id]) => id)
-    );
+    const currentServerIds = new Set(this.globalServerIds);
     const newServerIds = new Set(Object.keys(parsedConfig.mcpServers));
 
     for (const id of currentServerIds) {
@@ -119,7 +120,10 @@ export class ClientManager {
       }
     }
 
+    this.globalServerIds.clear();
+
     for (const [id, serverConfig] of Object.entries(parsedConfig.mcpServers)) {
+      this.globalServerIds.add(id);
       if (currentServerIds.has(id)) {
         const existing = this.clients.get(id);
         if (JSON.stringify(existing?.config) !== JSON.stringify(serverConfig)) {
@@ -194,6 +198,7 @@ export class ClientManager {
         }
       }
       this.clients.delete(id);
+      this.globalServerIds.delete(id);
       this.logger.info("ClientManager", `Removed downstream client: ${id}`);
     }
   }
@@ -378,13 +383,11 @@ export class ClientManager {
   public async getClientsJIT(auth?: AuthKey): Promise<Map<string, Client>> {
     const map = new Map<string, Client>();
     
-    for (const [id, managed] of this.clients.entries()) {
-      if (!managed.isTenantContext) {
-         try {
-           const client = await this.getClientJIT(id, auth);
-           if (client) map.set(id, client);
-         } catch(e) {}
-      }
+    for (const id of this.globalServerIds) {
+       try {
+         const client = await this.getClientJIT(id, auth);
+         if (client) map.set(id, client);
+       } catch(e) {}
     }
     
     if (auth && auth.mcpServers) {
@@ -401,8 +404,9 @@ export class ClientManager {
   
   public getClients(): Map<string, Client> {
     const map = new Map<string, Client>();
-    for (const [id, managed] of this.clients.entries()) {
-      if (!managed.isTenantContext && managed.status === "CONNECTED" && managed.client) {
+    for (const id of this.globalServerIds) {
+      const managed = this.clients.get(id);
+      if (managed && managed.status === "CONNECTED" && managed.client) {
         map.set(id, managed.client);
       }
     }
@@ -411,7 +415,7 @@ export class ClientManager {
   
   public destroy() {
      this.isDestroyed = true;
-     if (this.pingInterval) clearInterval(this.pingInterval);
+     if (this.sweepTimer) clearTimeout(this.sweepTimer);
      for (const id of this.clients.keys()) {
          this.removeClient(id).catch(()=>{});
      }

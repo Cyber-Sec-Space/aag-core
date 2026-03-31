@@ -129,17 +129,28 @@ export class ProxyServer {
     return auth;
   }
 
-  private static regexPatternCache = new Map<string, RegExp>();
+  private regexPatternCache = new Map<string, RegExp>();
 
   private matchPattern(value: string, pattern: string): boolean {
     if (pattern === "*") return true;
     if (!pattern.includes("*")) return value === pattern;
     
-    let regex = ProxyServer.regexPatternCache.get(pattern);
+    let regex = this.regexPatternCache.get(pattern);
     if (!regex) {
        const regexPattern = "^" + pattern.split("*").map(s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$";
        regex = new RegExp(regexPattern);
-       ProxyServer.regexPatternCache.set(pattern, regex);
+       this.regexPatternCache.set(pattern, regex);
+       
+       const maxSize = this.configStore.getConfig()?.system?.regexCacheSize ?? 10000;
+       if (this.regexPatternCache.size > maxSize) {
+           const firstKey = this.regexPatternCache.keys().next().value;
+           /* istanbul ignore next - Extreme boundary protection */
+           if (firstKey !== undefined) this.regexPatternCache.delete(firstKey);
+       }
+    } else {
+       // LRU Refresh
+       this.regexPatternCache.delete(pattern);
+       this.regexPatternCache.set(pattern, regex);
     }
     
     return regex.test(value);

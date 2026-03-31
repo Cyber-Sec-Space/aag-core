@@ -29,12 +29,12 @@ It is designed to be highly modular. By defining strict interfaces (`ISecretStor
 - **Plugin Ecosystem & Middlewares**: Standardized `IPlugin` interface and dynamic `PluginLoader` allowing community developers to seamlessly inject third-party extensions. All plugins natively inherit multi-user isolation and shared `IConfigStore` parameter structures. Built-in `DataMaskingPlugin` provided for PII redaction.
 - **Scale-to-Zero Rate Limiting**: Built-in `RateLimitPlugin` employing the Token Bucket algorithm over an atomic `IRateLimitStore`. Supports dynamic, per-user limits mapped automatically by linking `IConfigStore`.
 
-### Security & Host Requirements
-
-When integrating `aag-core` into SaaS, Multi-Tenant, or internet-exposed environments, host developers must adhere to the following constraints:
+### 🛡️ Enterprise SaaS Security
+- **OOM Prevention (LRU Buffers)**: Dynamic wildcard RBAC policies (`*`) utilize auto-evicting LRU RegExp Maps constrained directly by the environment (`system.regexCacheSize = 10000`). Natively deflects Memory Exhaustion (OOM) vectors when serving massive influxes of multi-tenant rule mutations.
 - **Strictly Stateless Downstreams**: To conserve machine resources, `aag-core` multiplexes tool execution commands from different AI users (hitting the same MCP server ID) into the **same background process/connection**. Downstream MCP servers MUST NOT maintain state (e.g., user-specific chat histories or session databases) unless they securely isolate operations using an `aiId` injected into the tool arguments. Failure to ensure stateless tools may result in Cross-Tenant State Pollution.
 - **RCE Prevention (`allowStdio`)**: Host architectures configuring user-provided tools (BYO-MCP) are inherently susceptible to Remote Code Execution limits. You MUST set `allowStdio: false` in the system config to prevent SaaS tenants from manipulating `stdio` arguments into executing malicious sub-commands (e.g. `rm -rf`).
 - **SSRF Prevention on Config**: `ClientManager` connects blindly to any `url` mapped inside the `IConfigStore`. You must explicitly sanitize, validate, and restrict (e.g., blocking internal VPC ranges like `10.x.x.x` or AWS `169.254.x.x`) any user-provided URL configurations before writing them to the store.
+- **Audit Logging**: Mandatory telemetry paths built natively into every route handler requiring explicit `IAuditLogger` implementation, achieving ISO/SOC2-ready logging density (`trace()`, `debug()`, `info()`).
 
 ### Installation
 

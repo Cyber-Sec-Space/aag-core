@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.0.0] - 2026-03-30
+## [3.0.0] - 2026-03-31
 
 ### Added
 - **Multi-Tenant BYO-MCP (Bring Your Own MCP)**: Upgraded `AuthKeySchema` and `ClientManager` to support tenant-specific MCP server definitions dynamically (`auth.mcpServers`). This allows users/tenants in a SaaS environment to connect their own private MCP servers seamlessly without restarting the core gateway.
@@ -13,8 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **RCE Security Gate (`allowStdio`)**: Implemented a system-wide `allowStdio` toggle in `SystemConfigSchema` (default: `false`). This acts as a hard boundary preventing SaaS tenants from defining `stdio` transports, effectively securing the host instance against Remote Code Execution (RCE) vectors while empowering HTTP/SSE based decoupled integrations.
 
 ### Fixed
-- **100k SaaS Concurrent Ping Starvation**: Completely rewrote the `ClientManager.pingInterval` health check daemon. Removed sequential `await` locks within the connection polling loop and transitioned to `Promise.race()` asynchronous event-loop concurrency. This natively prevents NodeJS from blocking for minutes when checking tens of thousands of downstream SaaS MCP servers.
-- **Extreme Memory Scale (O(1))**: Upgraded `regexPatternCache` (ProxyServer) and `pluginRegexCache` (DataMaskingPlugin) from instance properties to global `static` properties. This definitively eliminates duplicate matching allocations, locking memory footprint to true `O(1)` even when spawning 100,000 independent multi-tenant Proxy Sessions.
+- **O(1) Memory & Routing Extractor**: Separated `globalServerIds` into an explicit Set inside `ClientManager`. This drops `getClientsJIT` routing complexity from O(N) back down to true O(1), preventing event-loop freezing when querying multi-tenant connection pools exceeding 500,000 instances.
+- **OOM Protection (Regex LRU Cache)**: Swapped infinite static `regexPatternCache` with a configurable LRU Cache (adjustable via `system.regexCacheSize` default 10,000). Completely prevents memory leak vulnerabilities orchestrated by SaaS users transmitting infinite combinations of dynamic string rules.
+- **100k SaaS Thundering Herd Ping Starvation**: Abolished the `setInterval` burst health check daemon. Rewrote the polling system utilizing a Continuous Sweeper (`sweepLoop`) that dynamically applies jittered Sleep slices proportional to network density, natively distributing Pings across the entire lifespan without network flooding or OS FD exhaustion.
 ## [2.2.0] - 2026-03-28
 
 ### Added
