@@ -21,7 +21,7 @@ The `ClientManager` is the core dispatch pool that dictates the lifecycles of ba
 - **JIT Wake-Up**: Downstream standard-io (stdio) child processes or continuous Server-Sent Events (SSE) background connections are not created when the core boots. They are only resolved and spawned at the exact millisecond an AI client makes a valid `CallTool` request or `ListTools` lookup.
 - **Stateless Multiplexing**: If User A and User B both hold valid credentials to execute tools on `mcp-server-1`, the system routes *both* users through the *exact same* background child process instance, stripping context logic to the bare arguments payload.
 - **Concurrent Ping Daemon**: A background thread continuously pings idle connections via an asynchronous, non-blocking promise race. It instantly yields back to the NodeJS event loop (`O(1)` overhead) every few chunked clients to completely eliminate server starvation when multiplexing 100,000+ tenant servers. If a connection lives past its idle threshold, it is automatically terminated (`DISCONNECTED_IDLE`) to recoup OS memory.
-- **O(1) Concurrent Connection Dispatch**: The core internally utilizes chunked `Promise.allSettled` execution matrices (chunks of 50). This actively circumvents NodeJS Head-of-Line Event Loop blocking when broadcasting commands against hundreds of SaaS downstream connections globally without starving File Descriptors.
+- **O(1) Concurrent Connection Dispatch**: When resolving backend architectures or fetching capabilities (`ListTools`), the core utilizes `Promise.allSettled` and chunked processing limits (`concurrentLimits.maxClientResolution` default 50). This actively circumvents `O(N)` NodeJS Head-of-Line Event Loop blocking when aggregating capabilities across hundreds of SaaS downstream endpoints globally, shrinking total latency down to the single slowest endpoint.
 
 ```mermaid
 sequenceDiagram
@@ -29,14 +29,12 @@ sequenceDiagram
     participant CM as ClientManager
     participant Subprocess as Downstream MCP (stdio/sse)
     
-    Proxy->>CM: getClientJIT('mcp-server-1')
-    alt Process Not Running (Scale-to-Zero)
-        CM->>CM: Resolve Transport Details
-        CM->>Subprocess: Spawn Child Process & Wait for Ready
-    else Process Running
-        CM-->>Proxy: Return cached Client
-    end
-    Proxy->>Subprocess: request({ method: "tools/call", aiId: "..." })
+    Proxy->>CM: getClientsJIT(['mcp-server-1', 'mcp-server-2'])
+    Note over CM: Batches resolving downstream in parallel (O(1) Block)
+    CM->>CM: Resolve Transport Details via Promise.allSettled Chunks
+    CM->>Subprocess: Spawn Child Process & Wait for Ready
+    Subprocess-->>Proxy: Return cached Client Dictionary
+    Proxy->>Subprocess: request({ method: "tools/list", aiId: "..." })
     Subprocess-->>Proxy: Payload Execution Result
 ```
 
@@ -170,23 +168,21 @@ AAG-Core fully supports SaaS architectures where tenants can define their own pr
 - **動態喚醒 (JIT Wake-Up)**：底層的 MCP 標準輸入輸出 (stdio) 行程或是長駐的 SSE 連線並不會伴隨 Core 的啟動預先載入。它們只會在被合法認證的 AI 客戶端發出 `CallTool` 的「那一毫秒」才會實際消耗 OS 資源生成。
 - **無狀態多工處理 (Stateless Multiplexing)**：如果 User A 與 User B 皆具備權限操作 `mcp-server-1` 子工具，系統會將兩個請求引導至「同一個」底層常駐行程，僅將差異打包在純文字的呼叫變數 (Arguments) 之中，不再重複建立進程。
 - **高併發非阻塞探測 (Concurrent Ping Daemon)**：系統建立了背景健康度探測演算法。透過非同步 (Asynchronous) 與非阻塞的 Promise 競爭迴圈，讓系統能以極低的 `O(1)` 事件迴圈開銷負載 100,000+ 租戶的併發。如果某連線經歷長時間的閒置未見操作，它會遭到自動的斷連 (`DISCONNECTED_IDLE`) 將記憶體全數歸還系統。
-- **O(1) 平行分批調度 (Concurrent Dispatch)**：為了因應百萬連線量的 SaaS 環境，框架內部全面採用「區塊化切片陣列 (`Promise.allSettled` Chunking)」。即使單一用戶掛載數百筆以上的下游伺服器需要平行請求，該防禦機制也能確保主執行緒完全不會陷入 `await` 迴圈卡死的泥沼中，同時巧妙迴避檔案描述詞 (FD) 瞬間掏空的窘境。
+- **O(1) 平行分批調度 (Concurrent Dispatch)**：面臨單一租約掛載高達數百筆以上的 `mcpServers` 需要平行詢問資源 (Capability List) 或初始化時，系統採用了「區塊化平行矩陣 (`Promise.allSettled` with Chunking)」演算法 (預設單次分派 50 組)。其使得請求的等待時長由傳統殘酷的 `O(N)` (所有伺服器響應相加)，極端縮成 `O(1)` (僅耗時於所有伺服器中最慢的那一台) 並徹底迴避檔案描述詞 (FD) 瞬間掏空的窘境。
 
 ```mermaid
 sequenceDiagram
     participant Proxy as 代理層 (Middleware)
     participant CM as ClientManager
-    participant Subprocess as 下游 MCP 行程 (stdio/sse)
+    participant Subprocess as 下游 MCP 行程叢集
     
-    Proxy->>CM: getClientJIT('mcp-server-1')
-    alt 無背景行程 (Scale-to-Zero 省電模式)
-        CM->>CM: 取用協定連線設定檔
-        CM->>Subprocess: 分岔生成子行程並等待 Ready 訊號
-    else 行程存活
-        CM-->>Proxy: 直接回傳快取的 Client
-    end
-    Proxy->>Subprocess: request({ method: "tools/call", aiId: "..." })
-    Subprocess-->>Proxy: 回傳 Payload 執行結果
+    Proxy->>CM: getClientsJIT(['mcp-server-1', 'mcp-server-2', ...])
+    Note over CM: 嚴密控制 Node Event Loop 單一行程下的分批平行化查詢
+    CM->>CM: 解析協定連線參數 (Promise.allSettled)
+    CM->>Subprocess: 分岔生成子行程並等待 Ready 訊號
+    Subprocess-->>Proxy: 一次性回傳 Client 啟動字典
+    Proxy->>Subprocess: 執行 request({ method: "tools/list", aiId: "..." })
+    Subprocess-->>Proxy: 無縫回傳彙整狀態結果
 ```
 
 ---

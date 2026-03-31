@@ -30,7 +30,8 @@ It is designed to be highly modular. By defining strict interfaces (`ISecretStor
 - **Scale-to-Zero Rate Limiting**: Built-in `RateLimitPlugin` employing the Token Bucket algorithm over an atomic `IRateLimitStore`. Supports dynamic, per-user limits mapped automatically by linking `IConfigStore`.
 
 ### 🛡️ Enterprise SaaS Security
-- **OOM Prevention (LRU Buffers)**: Dynamic wildcard RBAC policies (`*`) utilize auto-evicting LRU RegExp Maps constrained directly by the environment (`system.regexCacheSize = 10000`). Natively deflects Memory Exhaustion (OOM) vectors when serving massive influxes of multi-tenant rule mutations.
+- **OOM Prevention (LRU Buffers)**: Dynamic wildcard RBAC policies (`*`) and `MemoryStateStore` states utilize auto-evicting Least-Recently-Used (LRU) Maps constrained directly by the environment. For example, `system.regexCacheSize` bounds regex evaluation tracking, and `maxKeys` configuration prevents internal Maps from growing unbounded. Natively deflects Memory Exhaustion (OOM) vectors under extreme high-cardinality multi-tenant spikes (100k+ users).
+- **O(1) Non-Blocking Dispatch**: Core orchestration engines (`ClientManager`, `ProxyServer`) handle downstream configuration aggregation and `ListTools` fetching using parallel concurrent chunking (`Promise.allSettled` with arrays up to `concurrentLimits`). Latencies are reduced from `O(N)` Event Loop blocks down to `O(1)` (bound only by the slowest downstream instance).
 - **Strictly Stateless Downstreams**: To conserve machine resources, `aag-core` multiplexes tool execution commands from different AI users (hitting the same MCP server ID) into the **same background process/connection**. Downstream MCP servers MUST NOT maintain state (e.g., user-specific chat histories or session databases) unless they securely isolate operations using an `aiId` injected into the tool arguments. Failure to ensure stateless tools may result in Cross-Tenant State Pollution.
 - **RCE Prevention (`allowStdio`)**: Host architectures configuring user-provided tools (BYO-MCP) are inherently susceptible to Remote Code Execution limits. You MUST set `allowStdio: false` in the system config to prevent SaaS tenants from manipulating `stdio` arguments into executing malicious sub-commands (e.g. `rm -rf`).
 - **SSRF Prevention on Config**: `ClientManager` connects blindly to any `url` mapped inside the `IConfigStore`. You must explicitly sanitize, validate, and restrict (e.g., blocking internal VPC ranges like `10.x.x.x` or AWS `169.254.x.x`) any user-provided URL configurations before writing them to the store.
@@ -186,7 +187,9 @@ For detailed architectural information, please see [ARCHITECTURE.md](https://git
 
 ### 資安與宿主環境要求 (Security Requirements)
 
-當您將 `aag-core` 部署於 SaaS、多租戶 (Multi-Tenant) 或開放式網路環境時，宿主開發者 (Host Developers) 必須嚴格遵守以下架構限制：
+當您將 `aag-core` 部署於 SaaS、多租戶 (Multi-Tenant) 或開放式網路環境（例如承受大於 10 萬名活躍併發用戶）時，宿主開發者 (Host Developers) 必須嚴格遵守以下架構限制：
+- **實體防記憶體爆破 (LRU 快取機制)**：所有具備大量無窮增長風險的問題陣列（如動態權限匹配的 RegExp 正則解析、Session 狀態機等），核心內部皆換用具備最大上限 (`maxKeys`) 切斷機制的 LRU 最少存取快取。防禦因大量租戶異常連線而誘發的 V8 OOM 崩潰。
+- **O(1) 等級平行無阻塞派送 (Non-Blocking Dispatch)**：當 `ClientManager` 需要去喚醒並同步多個下游伺服器的 Capability (`ListTools`) 時，傳統的 `O(N)` 標配 Await 迴圈會遭受阻塞導致回應極端緩慢。核心內部重構採用區塊化的平行解析 `Promise.allSettled(...)`，且單次發包率受 `concurrentLimits` 上限控管，達成耗時只受最慢之單一微服務拖累的滿血效能。
 - **絕對無狀態的下游伺服器 (Strictly Stateless Downstreams)**：為了達成極致的效能與擴展性，如果多位不同的 AI 終端使用者請求相同的 MCP 伺服器 ID，`aag-core` 會將這些請求「多工多工 (Multiplex)」分派至**同一個底層背景程序或連線**。因此，下游的 MCP 工具必須是絕對無狀態的。如果下游工具本身持有狀態（例如記憶體快取或暫存資料庫），除非其嚴格透過 Payload 中的 `aiId` 進行隔離，否則將產生跨租戶資料外洩 (Cross-Tenant State Pollution) 的嚴重風險。
 - **防止遠端木馬命令執行防護 (RCE Prevention)**：假如您的 Host 服務擁抱了自帶擴充（BYO-MCP），因為租戶可以自行傳遞 MCP 註冊參數，這代表他們可以填寫諸如 `['rm', '-rf']` 這類參數於 `stdio` 內。為此您必須確保將 `allowStdio` 鐵門開關鎖死為 `false`，強制關閉本地行程註冊功能，避免整個核心被入侵。
 - **防範伺服器端請求偽造 (SSRF)**：`ClientManager` 會無條件連線至您 `IConfigStore` 提供的任何 `url`。在將這類使用者自訂或動態產生的連接埠套用至 Store 之前，您必須在您的應用程式層預先過濾並阻擋惡意的內部 IP（例如強制攔截針對 `169.254.169.254` 或是企業內網 `10.x.x.x` 的配置請求）。
