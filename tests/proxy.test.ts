@@ -523,5 +523,23 @@ describe("ProxyServer Suite", () => {
         it("should safely destroy", () => {
             expect(() => proxy.destroy()).not.toThrow();
         });
+
+        it("should evict regex caches in ProxyServer when max size is hit", () => {
+             const customConfig = new MockConfigStore({
+                mcpServers: {},
+                system: { regexCacheSize: 1, pingIntervalMs: 10000, pingTimeoutMs: 5000, idleTimeoutMs: 600000, reconnectTimeoutMs: 30000, allowStdio: false }
+            } as any);
+            const p = new ProxyServer(
+                new ClientManager(customConfig, new MockSecretStore(), new MockLogger()), 
+                customConfig, 
+                new MockSecretStore(),
+                new ConfigAuthStore(customConfig), 
+                new MockLogger()
+            );
+            expect((p as any).matchPattern("test1", "pattern1*")).toBe(false);
+            expect((p as any).matchPattern("test2", "pattern2*")).toBe(false);
+            expect((p as any).regexPatternCache.size).toBe(1);
+            p.destroy();
+        });
     });
 });

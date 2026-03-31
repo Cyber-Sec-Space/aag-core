@@ -60,6 +60,33 @@ describe("DataMaskingMiddleware Suite", () => {
         expect(processedB.content[0].text).toBe("Global: [YYY]. Tenant: TOP_SECRET");
     });
 
+    it("should evict LRU cache when DataMaskingMiddleware regex config size exceeds system.regexCacheSize", async () => {
+        // Needs MockConfigStore import or dummy obj
+        const configStore: any = { getConfig: () => ({ system: { regexCacheSize: 1 } }) };
+        const masker = new DataMaskingMiddleware([], "***", configStore);
+        const ctx: any = { 
+            aiId: "tenant-Evict", serverId: "test", toolName: "test",
+            auth: { pluginConfig: { "aag-core-data-masking": { rules: ["rule1"] } } }
+        };
+        await masker.onResponse(ctx, { content: [{ type: "text", text: "hit rule1" }] });
+        
+        ctx.auth.pluginConfig["aag-core-data-masking"].rules = ["rule2"];
+        await masker.onResponse(ctx, { content: [{ type: "text", text: "hit rule2" }] });
+        
+        expect((DataMaskingMiddleware as any).pluginRegexCache.size).toBe(1);
+    });
+
+    it("should return output unchanged if activeRules is empty", async () => {
+        const masker = new DataMaskingMiddleware([]);
+        const ctx: any = { 
+            aiId: "tenant-Empty", serverId: "test", toolName: "test",
+            auth: { pluginConfig: { "aag-core-data-masking": { rules: [] } } }
+        };
+        const result = { content: [{ type: "text", text: "hello" }] };
+        const processed = await masker.onResponse(ctx, result) as any;
+        expect(processed).toEqual(result);
+    });
+
     it("should handle undefined configs and fallback securely without crashing", async () => {
         // Test 1: auth returns completely undefined config
         const masker1 = new DataMaskingMiddleware([/secret/gi], "***");

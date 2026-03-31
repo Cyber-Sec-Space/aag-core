@@ -361,6 +361,24 @@ describe("ClientManager", () => {
     expect(clientManager.getClientStatus("diff-server")).toBe("DISCONNECTED_IDLE");
   });
 
+  it('should safely destroy and catch removeClient errors', async () => {
+      const { ClientManager: CM } = await import("../src/clientManager.js");
+      clientManager = new CM(new MockConfigStore({mcpServers: {}} as any), new MockSecretStore(), new MockLogger());
+      
+      (clientManager as any).clients.set("error-client", {
+          config: { transport: "stdio", command: "test" },
+          status: "CONNECTED",
+          client: { close: jest.fn<any>().mockRejectedValue(new Error("force-catch")) },
+          reconnectAttempts: 0
+      });
+      
+      expect(() => clientManager.destroy()).not.toThrow();
+      
+      // Hit the undefined sweepTimer branch
+      (clientManager as any).sweepTimer = undefined;
+      expect(() => clientManager.destroy()).not.toThrow();
+  });
+
   it("should return null for unsupported transports triggering boot throw", async () => {
       const { ClientManager: CM } = await import("../src/clientManager.js");
       clientManager = new CM(new MockConfigStore({} as any), new MockSecretStore(), new MockLogger());

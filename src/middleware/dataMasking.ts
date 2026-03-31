@@ -40,6 +40,7 @@ export class DataMaskingMiddleware implements ProxyMiddleware {
                         
                         if (DataMaskingMiddleware.pluginRegexCache.size > maxSize) {
                             const firstKey = DataMaskingMiddleware.pluginRegexCache.keys().next().value;
+                            /* istanbul ignore next - Generator boundary protection */
                             if (firstKey !== undefined) DataMaskingMiddleware.pluginRegexCache.delete(firstKey);
                         }
                     } else {

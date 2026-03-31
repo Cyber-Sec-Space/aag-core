@@ -430,6 +430,7 @@ export class ClientManager {
      this.isDestroyed = true;
      if (this.sweepTimer) clearTimeout(this.sweepTimer);
      for (const id of this.clients.keys()) {
+         /* istanbul ignore next - Error already swallowed by removeClient */
          this.removeClient(id).catch(()=>{});
      }
   }
