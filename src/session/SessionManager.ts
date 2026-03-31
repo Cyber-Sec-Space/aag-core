@@ -1,12 +1,15 @@
 import { IConfigStore } from "../interfaces/IConfigStore.js";
 import { IAuditLogger } from "../interfaces/IAuditLogger.js";
 
+import { RateLimitExceededError } from "../errors.js";
+
 export class SessionManager {
     /**
      * Map of AI_ID to a Set of disconnect callbacks.
      * Each Active Session registers a callback to forcibly close its transport/connection.
      */
     private activeSessions: Map<string, Set<() => void>> = new Map();
+    private maxConcurrentSessions: number = 1000;
 
     /**
      * @param configStore Deprecated in v2.2.0. Pass null or any IConfigStore. Config sync is now decoupled.
@@ -29,10 +32,17 @@ export class SessionManager {
      * @returns A function to unregister the session when it naturally closes.
      */
     public registerSession(aiId: string, disconnectFn: () => void): () => void {
-        if (!this.activeSessions.has(aiId)) {
-            this.activeSessions.set(aiId, new Set());
+        let set = this.activeSessions.get(aiId);
+        if (!set) {
+            set = new Set();
+            this.activeSessions.set(aiId, set);
         }
-        this.activeSessions.get(aiId)!.add(disconnectFn);
+
+        if (set.size >= this.maxConcurrentSessions) {
+            throw new RateLimitExceededError(`Maximum concurrent sessions (${this.maxConcurrentSessions}) exceeded for AI ID '${aiId}'.`);
+        }
+
+        set.add(disconnectFn);
 
         return () => {
              const fns = this.activeSessions.get(aiId);

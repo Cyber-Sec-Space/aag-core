@@ -106,6 +106,29 @@ describe("ProxyServer Suite", () => {
             expect(auth.key).toBe("secret");
         });
 
+        it("should perform automatic GC on expired authCache entries", () => {
+            jest.useFakeTimers();
+            const authStore = new ConfigAuthStore(configStore);
+            const proxyServer = new ProxyServer(clientManager, configStore, new MockSecretStore(), authStore, new MockLogger());
+
+            proxyServer["authCache"].set("todel", {
+                auth: { key: "x", permissions: {}, revoked: false, pluginConfig: {} },
+                expiresAt: Date.now() - 1000
+            });
+
+            const activeEntry = {
+                auth: { key: "y", permissions: {}, revoked: false, pluginConfig: {} },
+                expiresAt: Date.now() + 600000 // 10 minutes, survives the 5m sweep
+            };
+            proxyServer["authCache"].set("keep", activeEntry);
+
+            jest.advanceTimersByTime(300000);
+
+            expect(proxyServer["authCache"].has("todel")).toBe(false);
+            expect(proxyServer["authCache"].has("keep")).toBe(true);
+            jest.useRealTimers();
+        });
+
         it("should reject if environment lacks credentials", async () => {
             delete process.env.AI_ID;
             const validateAuth = proxy.validateAuth.bind(proxy);

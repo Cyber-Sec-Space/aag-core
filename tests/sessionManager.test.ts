@@ -1,5 +1,6 @@
 import { jest } from "@jest/globals";
 import { SessionManager } from "../src/session/SessionManager.js";
+import { RateLimitExceededError } from "../src/errors.js";
 import { MockConfigStore, MockLogger } from "./mocks.js";
 
 describe("SessionManager", () => {
@@ -21,6 +22,23 @@ describe("SessionManager", () => {
     it("should instantiate without throwing", () => {
         const manager = new SessionManager(configStore, logger);
         expect(manager).toBeDefined();
+    });
+
+    it("should throw RateLimitExceededError when maxConcurrentSessions is exceeded", () => {
+        const manager = new SessionManager(configStore, logger);
+        const aiId = "ai_flood";
+        const fns: (() => void)[] = [];
+        
+        for (let i = 0; i < 1000; i++) {
+            fns.push(manager.registerSession(aiId, () => {}));
+        }
+
+        expect(() => {
+            manager.registerSession(aiId, () => {});
+        }).toThrow(RateLimitExceededError);
+
+        // Cleanup
+        fns.forEach(unreg => unreg());
     });
 
     it("should allow registering and unregistering sessions", () => {

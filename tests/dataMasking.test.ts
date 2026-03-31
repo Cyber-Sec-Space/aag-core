@@ -78,16 +78,48 @@ describe("DataMaskingMiddleware Suite", () => {
         expect(processed2.content[0].text).toBe("This is a ***"); // Fallbacks to global
     });
 
-    it("should bypass and return early if activeRules array is empty natively resolving multi-tenant logic", async () => {
-        // Global rules are empty too.
-        const masker = new DataMaskingMiddleware([], "***");
-        const ctx: any = {
-            aiId: "tenant-Z", serverId: "test", toolName: "test",
-            auth: { pluginConfig: { "aag-core-data-masking": { rules: [] } } }
-        };
-        const result = { content: [{ type: "text", text: "Some normal text" }] };
-        const processed = await masker.onResponse(ctx, result) as any;
-        expect(processed.content[0].text).toBe("Some normal text"); // Early return at line 41
+    it("should handle invalid config gently", () => {
+        const mw = new DataMaskingMiddleware(["secret"]);
+        const ctx = {
+            auth: {
+                aiId: "aiid_2",
+                key: "key2",
+                pluginConfig: {
+                    "aag-core-data-masking": { rules: {} } // rules must be array
+                }
+            }
+        } as any;
+        
+        const res = mw.onResponse(ctx, {content: [{type: "text", text: "this is a secret"}]});
+        expect(res.content[0].text).toBe("this is a ***"); // Uses global only
+    });
+
+    it("should evict pluginRegexCache using LRU when capacity is reached", () => {
+        const mockConfig = {
+            getConfig: () => ({ system: { regexCacheSize: 2 } })
+        } as unknown as any;
+
+        const mw = new DataMaskingMiddleware([], "***", mockConfig);
+        (DataMaskingMiddleware as any)["pluginRegexCache"].clear();
+
+        const mockResponse = { content: [{ type: "text", text: "hello" }] };
+
+        // Fill cache
+        mw.onResponse({ auth: { pluginConfig: { "aag-core-data-masking": { rules: ["RuleA"] } } } } as any, mockResponse);
+        mw.onResponse({ auth: { pluginConfig: { "aag-core-data-masking": { rules: ["RuleB"] } } } } as any, mockResponse);
+        expect((DataMaskingMiddleware as any)["pluginRegexCache"].size).toBe(2);
+
+        // LRU bump RuleA
+        mw.onResponse({ auth: { pluginConfig: { "aag-core-data-masking": { rules: ["RuleA"] } } } } as any, mockResponse);
+        
+        // Overflow to 3, RuleB should be deleted since RuleA was recently used
+        mw.onResponse({ auth: { pluginConfig: { "aag-core-data-masking": { rules: ["RuleC"] } } } } as any, mockResponse);
+
+        expect((DataMaskingMiddleware as any)["pluginRegexCache"].size).toBe(2);
+        expect((DataMaskingMiddleware as any)["pluginRegexCache"].has("RuleB")).toBe(false);
+        expect((DataMaskingMiddleware as any)["pluginRegexCache"].has("RuleA")).toBe(true);
+        expect((DataMaskingMiddleware as any)["pluginRegexCache"].has("RuleC")).toBe(true);
+        (DataMaskingMiddleware as any)["pluginRegexCache"].clear();
     });
 
     it("should process tenant rules containing explicit RegExp instances natively", async () => {

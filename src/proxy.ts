@@ -35,6 +35,7 @@ export class ProxyServer {
   private middlewares: ProxyMiddleware[] = [];
   private authCache: Map<string, { auth: AuthKey; expiresAt: number }> = new Map();
   private authCacheTTL = 60000;
+  private authCacheGcInterval: ReturnType<typeof setInterval>;
 
   constructor(
       clientManager: ClientManager, 
@@ -63,6 +64,22 @@ export class ProxyServer {
     );
 
     this.setupRequestHandlers();
+
+    // Prevent AuthCache from growing indefinitely in SaaS multi-tenant environments
+    this.authCacheGcInterval = setInterval(() => {
+        const now = Date.now();
+        for (const [key, value] of this.authCache.entries()) {
+            if (value.expiresAt <= now) {
+                this.authCache.delete(key);
+            }
+        }
+    }, 300000); // Sweep every 5 minutes
+    this.authCacheGcInterval.unref(); // Do not block Node.js exit
+  }
+
+  public destroy() {
+      // Allow clean shutdown
+      clearInterval(this.authCacheGcInterval);
   }
 
   public use(middleware: ProxyMiddleware) {

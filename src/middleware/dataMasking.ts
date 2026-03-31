@@ -29,11 +29,22 @@ export class DataMaskingMiddleware implements ProxyMiddleware {
         const pluginCfg = context.auth?.pluginConfig?.["aag-core-data-masking"];
         if (pluginCfg) {
             if (Array.isArray(pluginCfg.rules)) {
+                const maxSize = this.configStore?.getConfig()?.system?.regexCacheSize ?? 10000;
+                
                 activeRules = pluginCfg.rules.map((r: string | RegExp) => {
                     if (typeof r !== "string") return r;
                     let regex = DataMaskingMiddleware.pluginRegexCache.get(r);
                     if (!regex) {
                         regex = new RegExp(r, "gi");
+                        DataMaskingMiddleware.pluginRegexCache.set(r, regex);
+                        
+                        if (DataMaskingMiddleware.pluginRegexCache.size > maxSize) {
+                            const firstKey = DataMaskingMiddleware.pluginRegexCache.keys().next().value;
+                            if (firstKey !== undefined) DataMaskingMiddleware.pluginRegexCache.delete(firstKey);
+                        }
+                    } else {
+                        // LRU behavior
+                        DataMaskingMiddleware.pluginRegexCache.delete(r);
                         DataMaskingMiddleware.pluginRegexCache.set(r, regex);
                     }
                     return regex;

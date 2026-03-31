@@ -8,8 +8,10 @@ export interface TokenBucket {
 export class MemoryRateLimitStore implements IRateLimitStore {
   private buckets = new Map<string, TokenBucket>();
   private gcInterval: ReturnType<typeof setInterval>;
+  private maxBuckets: number;
 
-  constructor() {
+  constructor(maxBuckets: number = 150000) {
+    this.maxBuckets = maxBuckets;
     this.gcInterval = setInterval(() => {
       const now = Date.now();
       for (const [id, bucket] of this.buckets.entries()) {
@@ -17,8 +19,12 @@ export class MemoryRateLimitStore implements IRateLimitStore {
           this.buckets.delete(id);
         }
       }
-    }, 300000);
+    }, 300000); // 5 mins
     this.gcInterval.unref(); // Prevent blocking process exit natively
+  }
+
+  public destroy() {
+    clearInterval(this.gcInterval);
   }
 
   /**
@@ -29,6 +35,11 @@ export class MemoryRateLimitStore implements IRateLimitStore {
     let bucket = this.buckets.get(id);
 
     if (!bucket) {
+      if (this.buckets.size >= this.maxBuckets) {
+        // Emergency clear first key
+        const firstKey = this.buckets.keys().next().value;
+        if (firstKey) this.buckets.delete(firstKey);
+      }
       bucket = { tokens: maxTokens, lastRefill: now };
       this.buckets.set(id, bucket);
     }

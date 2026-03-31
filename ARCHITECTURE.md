@@ -246,6 +246,7 @@ sequenceDiagram
 
 為此提供的 `SessionManager`：
 - 利用弱層級別的記憶紀錄所有活躍的底層 TCP Socket 連線。
+- 實現了軟併發限制 (`maxConcurrentSessions` 預設 1000)，如客戶端惡意超發 Slowloris 連線（例如：同時掛起 5000 個未關閉 Session），將主動回傳 HTTP 429 `RateLimitExceededError` 截斷請求，保護作業系統 File Descriptor。
 - 給予應用實例化程式一個終止介入點 (`SessionManager.disconnectSession(aiId)`)
 - 尋找符合的使用者直接由 Node.js 深處發送銷毀命令 (Socket End)。
 
@@ -266,8 +267,10 @@ flowchart LR
 
 AAG-Core 把所有可以替換的商業邏輯（如：速率限制 Token Bucket 計數器、機密攔截遮罩資料、分析型事件埋點日誌）完全交接到了 `IPlugin` 環境，從核心剝離。這代表任何社群玩家可以獨立發布相關 Npm 套件。
 
-**原生動態注入優勢：**
+**原生動態注入優勢與安全邊界：**
 因為 `ProxyServer` 在最初步已經向 `IAuthStore` 解析完畢租戶的檔案，所以往後排期的中介軟體 (Middlewares) 只需要專注當下：他們能直接由 `context.auth.pluginConfig` 變現該租戶「獨一無二」的自定義修改，無須向外發出多餘網路請求。
+- **MemoryRateLimitStore GC 上限**：原生預設限流器擁有最大 Token Bucket 上限（`maxBuckets` 預設 150000）。面對殭屍 ID 攻擊 (DDoS) 時將自動丟棄老舊桶避免記憶體爆破。
+- **Regex LRU 緩存機制**：`DataMaskingMiddleware` 取代了無窮增長的 Static Cache，並引入 Least Recently Used 防禦機制 (`system.regexCacheSize` 預設 10000)，嚴防 SaaS 客戶動態變更 `pluginConfig` 導致記憶體溢出。
 
 ```mermaid
 flowchart TD

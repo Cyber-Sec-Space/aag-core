@@ -8,11 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [3.0.0] - 2026-03-31
 
 ### Added
-- **Multi-Tenant BYO-MCP (Bring Your Own MCP)**: Upgraded `AuthKeySchema` and `ClientManager` to support tenant-specific MCP server definitions dynamically (`auth.mcpServers`). This allows users/tenants in a SaaS environment to connect their own private MCP servers seamlessly without restarting the core gateway.
+- **LRU Regex Cache limits**: `DataMaskingMiddleware` now utilizes an LRU cache implementation (`max: 10000`, configurable via `system.regexCacheSize`) for dynamically compiled tenant expressions, preventing permanent memory exhaustion under high-cardinality multi-tenant loads.
+- **Concurrent Session Limits**: `SessionManager` now enforces a `maxConcurrentSessions` soft limit (default `1000` per AI ID). If an identity attempts to breach this threshold concurrently (e.g. Slowloris connections), a `RateLimitExceededError` bounds the connections.
+- **Configurable `system.regexCacheSize`**: Introduced memory footprint tuning variables in `SystemConfigSchema`.
 - **Tenant Scope Isolation (`tenantId`)**: Introduced `tenantId` property in `AuthKeySchema` which instructs the `ClientManager` to group and share JIT connection pools across all `aiId`s belonging to the same tenant. Achieves zero-redundancy O(1) connection sharing.
 - **RCE Security Gate (`allowStdio`)**: Implemented a system-wide `allowStdio` toggle in `SystemConfigSchema` (default: `false`). This acts as a hard boundary preventing SaaS tenants from defining `stdio` transports, effectively securing the host instance against Remote Code Execution (RCE) vectors while empowering HTTP/SSE based decoupled integrations.
 
 ### Fixed
+- **Auth Token Memory Leak**: Introduced automatic background Garbage Collection (GC) in `ProxyServer`. Stale `<aiId, credentials>` structures cached deep inside RAM will now be recursively swept and unreferenced when their TTL expires without interaction.
+- **Memory Rate Limiter Eviction Strategy**: Hardened the fallback `MemoryRateLimitStore` token bucket by strictly enforcing a `maxBuckets` limit (default `150000`). Under aggressive high-frequency uniquely generated attacks, it will immediately slice and evict the oldest entries to preserve master thread stability.
 - **O(1) Memory & Routing Extractor**: Separated `globalServerIds` into an explicit Set inside `ClientManager`. This drops `getClientsJIT` routing complexity from O(N) back down to true O(1), preventing event-loop freezing when querying multi-tenant connection pools exceeding 500,000 instances.
 - **OOM Protection (Regex LRU Cache)**: Swapped infinite static `regexPatternCache` with a configurable LRU Cache (adjustable via `system.regexCacheSize` default 10,000). Completely prevents memory leak vulnerabilities orchestrated by SaaS users transmitting infinite combinations of dynamic string rules.
 - **100k SaaS Thundering Herd Ping Starvation**: Abolished the `setInterval` burst health check daemon. Rewrote the polling system utilizing a Continuous Sweeper (`sweepLoop`) that dynamically applies jittered Sleep slices proportional to network density, natively distributing Pings across the entire lifespan without network flooding or OS FD exhaustion.

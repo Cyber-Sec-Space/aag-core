@@ -108,3 +108,47 @@ describe("RateLimitPlugin Suite", () => {
         expect(mockProxy.use).toHaveBeenCalled();
     });
 });
+
+import { MemoryRateLimitStore } from "../src/interfaces/MemoryRateLimitStore.js";
+
+describe("MemoryRateLimitStore Suite", () => {
+    let start: number;
+
+    beforeEach(() => {
+        jest.useFakeTimers();
+        start = Date.now();
+    });
+
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
+    it("should auto-garbage collect buckets every 5 minutes", () => {
+        const store = new MemoryRateLimitStore();
+        store.consume("gc_test", 5, 100000);
+        expect(store["buckets"].has("gc_test")).toBe(true);
+        
+        Date.now = jest.fn(() => start + 3600001); // 1 hour + 1ms later
+        jest.advanceTimersByTime(300000); // Trigger setInterval
+        
+        expect(store["buckets"].has("gc_test")).toBe(false);
+        store.destroy();
+    });
+
+    it("should evict oldest bucket when maxBuckets is exceeded", async () => {
+        const smallStore = new MemoryRateLimitStore(2); // Max 2 buckets
+        await smallStore.consume("id_1", 10, 1000);
+        await smallStore.consume("id_2", 10, 1000);
+        
+        expect(smallStore["buckets"].size).toBe(2);
+        
+        await smallStore.consume("id_3", 10, 1000); // Triggers eviction
+        
+        expect(smallStore["buckets"].size).toBe(2);
+        expect(smallStore["buckets"].has("id_1")).toBe(false); // oldest removed
+        expect(smallStore["buckets"].has("id_2")).toBe(true);
+        expect(smallStore["buckets"].has("id_3")).toBe(true);
+
+        smallStore.destroy();
+    });
+});
