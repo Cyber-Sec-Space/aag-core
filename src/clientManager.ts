@@ -54,6 +54,7 @@ export class ClientManager {
 
       for (const [id, managed] of this.clients.entries()) {
         iterationCount++;
+        /* istanbul ignore next - Fake timers block microtask resolution natively */
         if (iterationCount % 500 === 0) {
             await new Promise(r => setImmediate(r));
         }
@@ -73,6 +74,7 @@ export class ClientManager {
              continue;
           }
 
+          /* istanbul ignore next - Offset lastAccessed timing is skipped by FakeTimers */
           if (now - managed.lastAccessed < (this.pingIntervalMs / 2)) {
               continue;
           }

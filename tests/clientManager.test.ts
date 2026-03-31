@@ -70,7 +70,7 @@ describe("ClientManager", () => {
   });
 
   // Evaluates the simulated Ping Daemon and automatic Exponential Backoff mechanisms handling downstream failures gracefully.
-    it("should yield to event loop when handling many clients in ping daemon", () => {
+    it("should yield to event loop when handling many clients in ping daemon", async () => {
         jest.useFakeTimers();
         for (let i = 0; i < 505; i++) {
             (clientManager as any).clients.set(`client-${i}`, {
@@ -85,8 +85,28 @@ describe("ClientManager", () => {
             });
         }
         
-        // Let it run to cover iteration chunking and skipping pings
+        // Active client that should skip ping checking entirely
+        (clientManager as any).clients.set(`active-client`, {
+            client: {
+                ping: jest.fn<any>().mockResolvedValue({}),
+                close: jest.fn<any>().mockResolvedValue({})
+            },
+            status: "CONNECTED",
+            lastAccessed: Date.now() + 29500, // Very recently active relative to interval + 30s
+            lastActive: Date.now() + 29500,
+            metrics: { requests: 0, errors: 0 },
+            options: {} as any
+        });
+        
+        // 1. Advance the ping loop
         jest.advanceTimersByTime(30000);
+        
+        // 2. Clear the setImmediate macro-tasks
+        for (let i = 0; i < 20; i++) {
+            jest.advanceTimersByTime(10);
+            await Promise.resolve();
+        }
+        
         jest.useRealTimers();
     });
 

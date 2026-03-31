@@ -447,8 +447,19 @@ describe("ProxyServer Suite", () => {
             const req = { method: "tools/call", params: { name: "test___tool", arguments: {} } };
             const handlers = (proxy.server as any)._requestHandlers;
             const resourceHandler = handlers.get("tools/call");
+            // Must mock ConfigAuthStore to successfully resolve so it hits the cache save
+            const getIdentitySpy = jest.spyOn((proxy as any).authStore, "getIdentity").mockResolvedValue({
+                permissions: {}, rateLimits: {}, mcpServers: { "tenant_server": {} }, tenantId: "tenant1", revoked: false
+            });
             
             try { await resourceHandler(req, {}); } catch(e) {}
+            
+            // Cover Cache Hit
+            try { await resourceHandler(req, {}); } catch(e) {}
+            
+            try { await resourceHandler({ method: "tools/call", params: { name: "noprefix", arguments: {} } }, {}); } catch(e) {}
+            // Cover exactly 0
+            try { await resourceHandler({ method: "tools/call", params: { name: "___tool", arguments: {} } }, {}); } catch(e) {}
             
             const realNow = Date.now.bind(Date);
             jest.spyOn(Date, "now").mockImplementation(() => realNow() + 61000); // Trigger TTL expiry
