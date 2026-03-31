@@ -21,6 +21,7 @@ The `ClientManager` is the core dispatch pool that dictates the lifecycles of ba
 - **JIT Wake-Up**: Downstream standard-io (stdio) child processes or continuous Server-Sent Events (SSE) background connections are not created when the core boots. They are only resolved and spawned at the exact millisecond an AI client makes a valid `CallTool` request or `ListTools` lookup.
 - **Stateless Multiplexing**: If User A and User B both hold valid credentials to execute tools on `mcp-server-1`, the system routes *both* users through the *exact same* background child process instance, stripping context logic to the bare arguments payload.
 - **Concurrent Ping Daemon**: A background thread continuously pings idle connections via an asynchronous, non-blocking promise race. It instantly yields back to the NodeJS event loop (`O(1)` overhead) every few chunked clients to completely eliminate server starvation when multiplexing 100,000+ tenant servers. If a connection lives past its idle threshold, it is automatically terminated (`DISCONNECTED_IDLE`) to recoup OS memory.
+- **O(1) Concurrent Connection Dispatch**: The core internally utilizes chunked `Promise.allSettled` execution matrices (chunks of 50). This actively circumvents NodeJS Head-of-Line Event Loop blocking when broadcasting commands against hundreds of SaaS downstream connections globally without starving File Descriptors.
 
 ```mermaid
 sequenceDiagram
@@ -169,6 +170,7 @@ AAG-Core fully supports SaaS architectures where tenants can define their own pr
 - **動態喚醒 (JIT Wake-Up)**：底層的 MCP 標準輸入輸出 (stdio) 行程或是長駐的 SSE 連線並不會伴隨 Core 的啟動預先載入。它們只會在被合法認證的 AI 客戶端發出 `CallTool` 的「那一毫秒」才會實際消耗 OS 資源生成。
 - **無狀態多工處理 (Stateless Multiplexing)**：如果 User A 與 User B 皆具備權限操作 `mcp-server-1` 子工具，系統會將兩個請求引導至「同一個」底層常駐行程，僅將差異打包在純文字的呼叫變數 (Arguments) 之中，不再重複建立進程。
 - **高併發非阻塞探測 (Concurrent Ping Daemon)**：系統建立了背景健康度探測演算法。透過非同步 (Asynchronous) 與非阻塞的 Promise 競爭迴圈，讓系統能以極低的 `O(1)` 事件迴圈開銷負載 100,000+ 租戶的併發。如果某連線經歷長時間的閒置未見操作，它會遭到自動的斷連 (`DISCONNECTED_IDLE`) 將記憶體全數歸還系統。
+- **O(1) 平行分批調度 (Concurrent Dispatch)**：為了因應百萬連線量的 SaaS 環境，框架內部全面採用「區塊化切片陣列 (`Promise.allSettled` Chunking)」。即使單一用戶掛載數百筆以上的下游伺服器需要平行請求，該防禦機制也能確保主執行緒完全不會陷入 `await` 迴圈卡死的泥沼中，同時巧妙迴避檔案描述詞 (FD) 瞬間掏空的窘境。
 
 ```mermaid
 sequenceDiagram

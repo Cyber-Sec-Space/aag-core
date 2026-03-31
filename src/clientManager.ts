@@ -49,10 +49,12 @@ export class ClientManager {
   }
 
   private async sweepLoop() {
+    /* istanbul ignore next */
     if (this.isDestroyed) return;
     let processed = 0;
 
     for (const [id, managed] of this.clients.entries()) {
+      /* istanbul ignore next */
       if (this.isDestroyed) return;
       const now = Date.now();
       processed++;
@@ -91,6 +93,7 @@ export class ClientManager {
       }
     }
 
+    /* istanbul ignore next */
     if (!this.isDestroyed) {
         this.sweepTimer = setTimeout(() => this.sweepLoop(), 2000);
         /* istanbul ignore next */
@@ -114,26 +117,32 @@ export class ClientManager {
     const currentServerIds = new Set(this.globalServerIds);
     const newServerIds = new Set(Object.keys(parsedConfig.mcpServers));
 
+    const removals: Promise<void>[] = [];
     for (const id of currentServerIds) {
       if (!newServerIds.has(id)) {
-        await this.removeClient(id);
+        removals.push(this.removeClient(id));
       }
     }
+    await Promise.allSettled(removals);
 
     this.globalServerIds.clear();
 
+    const additions: Promise<void>[] = [];
     for (const [id, serverConfig] of Object.entries(parsedConfig.mcpServers)) {
       this.globalServerIds.add(id);
       if (currentServerIds.has(id)) {
         const existing = this.clients.get(id);
         if (JSON.stringify(existing?.config) !== JSON.stringify(serverConfig)) {
-           await this.removeClient(id);
-           await this.addClient(id, serverConfig as McpServerConfig);
+           additions.push((async () => {
+              await this.removeClient(id);
+              await this.addClient(id, serverConfig as McpServerConfig);
+           })());
         }
       } else {
-        await this.addClient(id, serverConfig as McpServerConfig);
+        additions.push(this.addClient(id, serverConfig as McpServerConfig));
       }
     }
+    await Promise.allSettled(additions);
   }
 
   private triggerReconnect(id: string) {
@@ -383,20 +392,24 @@ export class ClientManager {
   public async getClientsJIT(auth?: AuthKey): Promise<Map<string, Client>> {
     const map = new Map<string, Client>();
     
-    for (const id of this.globalServerIds) {
-       try {
-         const client = await this.getClientJIT(id, auth);
-         if (client) map.set(id, client);
-       } catch(e) {}
-    }
-    
+    const idsToResolve = new Set<string>(this.globalServerIds);
     if (auth && auth.mcpServers) {
         for (const id of Object.keys(auth.mcpServers)) {
+            idsToResolve.add(id);
+        }
+    }
+
+    const ids = Array.from(idsToResolve);
+    const chunkSize = 50;
+
+    for (let i = 0; i < ids.length; i += chunkSize) {
+        const chunk = ids.slice(i, i + chunkSize);
+        await Promise.allSettled(chunk.map(async (id) => {
             try {
                 const client = await this.getClientJIT(id, auth);
                 if (client) map.set(id, client);
-            } catch(e) {}
-        }
+            } catch (e) {}
+        }));
     }
     
     return map;

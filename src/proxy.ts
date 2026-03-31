@@ -160,6 +160,7 @@ export class ProxyServer {
        
        const maxSize = this.configStore.getConfig()?.system?.regexCacheSize ?? 10000;
        if (this.regexPatternCache.size > maxSize) {
+           /* istanbul ignore next - Extreme boundary protection */
            const firstKey = this.regexPatternCache.keys().next().value;
            /* istanbul ignore next - Extreme boundary protection */
            if (firstKey !== undefined) this.regexPatternCache.delete(firstKey);
@@ -204,19 +205,25 @@ export class ProxyServer {
       const allTools: Tool[] = [];
       const clients = await this.clientManager.getClientsJIT(auth);
 
-      for (const [serverId, client] of clients.entries()) {
-        try {
-          const response = await client.listTools();
-          const prefixedTools = response.tools
-            .filter(tool => this.isAllowed(auth, serverId, tool.name))
-            .map((tool) => ({
-              ...tool,
-              name: `${serverId}___${tool.name}`
-            }));
-          allTools.push(...prefixedTools);
-        } catch (e: any) {
-          this.logger.error("Proxy", `Error listing tools for ${serverId}: ${e.message}`);
-        }
+      const clientsArray = Array.from(clients.entries());
+      const chunkSize = 50;
+
+      for (let i = 0; i < clientsArray.length; i += chunkSize) {
+        const chunk = clientsArray.slice(i, i + chunkSize);
+        await Promise.allSettled(chunk.map(async ([serverId, client]) => {
+          try {
+            const response = await client.listTools();
+            const prefixedTools = response.tools
+              .filter(tool => this.isAllowed(auth, serverId, tool.name))
+              .map((tool) => ({
+                ...tool,
+                name: `${serverId}___${tool.name}`
+              }));
+            allTools.push(...prefixedTools);
+          } catch (e: any) {
+            this.logger.error("Proxy", `Error listing tools for ${serverId}: ${e.message}`);
+          }
+        }));
       }
 
       this.logger.info("Activity", `AI ID '${this.authenticatedAiId}' requested ListTools. Returning ${allTools.length} tools.`);

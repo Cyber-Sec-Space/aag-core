@@ -516,7 +516,12 @@ describe("ProxyServer Suite", () => {
                 callTool: jest.fn<any>().mockResolvedValue({ content: [] })
             } as any);
             
+            
             await expect(callHandler(req, {})).resolves.toBeDefined();
+        });
+
+        it("should safely destroy", () => {
+            expect(() => proxy.destroy()).not.toThrow();
         });
     });
 });
