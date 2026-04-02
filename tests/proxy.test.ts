@@ -495,7 +495,7 @@ describe("ProxyServer Suite", () => {
             delete process.env.AI_KEY;
         });
 
-        it("should route correctly if target server exists only in tenant mcpServers", async () => {
+        it("should route correctly and prevent SSRD secrets if target server exists only in tenant mcpServers", async () => {
             const handlers = (proxy.server as any)._requestHandlers;
             const callHandler = handlers.get("tools/call");
             
@@ -509,15 +509,18 @@ describe("ProxyServer Suite", () => {
                 key: "test-key",
                 revoked: false,
                 pluginConfig: {},
-                mcpServers: { personal: { transport: "sse", url: "http://localhost/sse" } }
+                mcpServers: { personal: { transport: "sse", url: "http://localhost/sse", authInjection: { type: "payload", key: "token", value: "rawToken" } } }
             });
             
+            const callToolMock = jest.fn<any>().mockResolvedValue({ content: [] });
             jest.spyOn(clientManager, "getClientJIT").mockResolvedValue({
-                callTool: jest.fn<any>().mockResolvedValue({ content: [] })
+                callTool: callToolMock
             } as any);
             
-            
             await expect(callHandler(req, {})).resolves.toBeDefined();
+            expect(callToolMock).toHaveBeenCalledWith(expect.objectContaining({
+                arguments: expect.objectContaining({ token: "rawToken" }) // MUST NOT be resolved by SecretStore
+            }));
         });
 
         it("should safely destroy", () => {

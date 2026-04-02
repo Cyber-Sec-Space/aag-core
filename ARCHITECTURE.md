@@ -21,7 +21,7 @@ The `ClientManager` is the core dispatch pool that dictates the lifecycles of ba
 - **JIT Wake-Up**: Downstream standard-io (stdio) child processes or continuous Server-Sent Events (SSE) background connections are not created when the core boots. They are only resolved and spawned at the exact millisecond an AI client makes a valid `CallTool` request or `ListTools` lookup.
 - **Stateless Multiplexing**: If User A and User B both hold valid credentials to execute tools on `mcp-server-1`, the system routes *both* users through the *exact same* background child process instance, stripping context logic to the bare arguments payload.
 - **Concurrent Ping Daemon**: A background thread continuously pings idle connections via an asynchronous, non-blocking promise race. It instantly yields back to the NodeJS event loop (`O(1)` overhead) every few chunked clients to completely eliminate server starvation when multiplexing 100,000+ tenant servers. If a connection lives past its idle threshold, it is automatically terminated (`DISCONNECTED_IDLE`) to recoup OS memory.
-- **O(1) Concurrent Connection Dispatch**: When resolving backend architectures or fetching capabilities (`ListTools`), the core utilizes `Promise.allSettled` and chunked processing limits (`concurrentLimits.maxClientResolution` default 50). This actively circumvents `O(N)` NodeJS Head-of-Line Event Loop blocking when aggregating capabilities across hundreds of SaaS downstream endpoints globally, shrinking total latency down to the single slowest endpoint.
+- **O(1) Concurrent Connection Dispatch**: When resolving backend architectures or fetching capabilities (`ListTools`), the core utilizes `Promise.allSettled` and chunked processing limits (`concurrentLimits.maxClientResolution` default 50). This actively circumvents `O(N)` NodeJS Head-of-Line Event Loop blocking when aggregating capabilities across hundreds of SaaS downstream endpoints globally, shrinking total latency down to the single slowest endpoint. Background GC routines also yield execution utilizing `setTimeout(r, 0)`/`setImmediate`.
 
 ```mermaid
 sequenceDiagram
@@ -142,8 +142,10 @@ AAG-Core fully supports SaaS architectures where tenants can define their own pr
 - The `AuthKey` schema dynamically accepts an `mcpServers` object and a `tenantId`.
 - During requests (`ListTools`, `CallTool`), `ProxyServer` seamlessly merges the globally mounted MCP servers with the tenant-specific MCP servers into a unified execution context.
 
-**O(1) Connection Pooling & RCE Protection:**
+**O(1) Connection Pooling, Limits & Execution Protection:**
+- **Resource Exhaustion Thresholds**: Tenant arrays are natively bounded. Exceeding `system.maxTenantServers` global thresholds or identity-specified `maxServers` automatically nullifies requests, rendering internal flooding completely impossible.
 - **`tenantId` Isolation**: To prevent thousands of identical LLM requests under the same tenant from launching thousands of redundant Node.js sub-processes, `ClientManager` isolates backend connection pools natively using `${tenantId}::${serverId}`. This enforces an extreme memory efficiency (O(1)) where multiple users representing the same tenant securely multiplex across a single backend connection.
+- **SSRD Secure Borders**: Target `SecretStore` payload injections (`authInjection.type="payload"`) explicitly separate global servers from dynamic tenant servers. Any config generated via a Tenant skips automated runtime decryption, protecting the `SecretStore` from OS-level Server-Side Request Deception.
 - **`allowStdio` RCE Gate**: Host architectures utilizing `BYO-MCP` are inherently susceptible to Remote Code Execution (RCE) if tenants inject malicious commands into `stdio` definitions. To mitigate this risk natively, the gateway exposes an `allowStdio` global lock (defaults to `false`), forcing all external tenant logic strictly through HTTP/SSE boundaries, preventing malicious sub-process forks.
 
 ---
@@ -168,7 +170,7 @@ AAG-Core fully supports SaaS architectures where tenants can define their own pr
 - **動態喚醒 (JIT Wake-Up)**：底層的 MCP 標準輸入輸出 (stdio) 行程或是長駐的 SSE 連線並不會伴隨 Core 的啟動預先載入。它們只會在被合法認證的 AI 客戶端發出 `CallTool` 的「那一毫秒」才會實際消耗 OS 資源生成。
 - **無狀態多工處理 (Stateless Multiplexing)**：如果 User A 與 User B 皆具備權限操作 `mcp-server-1` 子工具，系統會將兩個請求引導至「同一個」底層常駐行程，僅將差異打包在純文字的呼叫變數 (Arguments) 之中，不再重複建立進程。
 - **高併發非阻塞探測 (Concurrent Ping Daemon)**：系統建立了背景健康度探測演算法。透過非同步 (Asynchronous) 與非阻塞的 Promise 競爭迴圈，讓系統能以極低的 `O(1)` 事件迴圈開銷負載 100,000+ 租戶的併發。如果某連線經歷長時間的閒置未見操作，它會遭到自動的斷連 (`DISCONNECTED_IDLE`) 將記憶體全數歸還系統。
-- **O(1) 平行分批調度 (Concurrent Dispatch)**：面臨單一租約掛載高達數百筆以上的 `mcpServers` 需要平行詢問資源 (Capability List) 或初始化時，系統採用了「區塊化平行矩陣 (`Promise.allSettled` with Chunking)」演算法 (預設單次分派 50 組)。其使得請求的等待時長由傳統殘酷的 `O(N)` (所有伺服器響應相加)，極端縮成 `O(1)` (僅耗時於所有伺服器中最慢的那一台) 並徹底迴避檔案描述詞 (FD) 瞬間掏空的窘境。
+- **O(1) 平行分批調度 (Concurrent Dispatch)**：面臨單一租約掛載高達數百筆以上的 `mcpServers` 需要平行詢問資源 (Capability List) 或初始化時，系統採用了「區塊化平行矩陣 (`Promise.allSettled` with Chunking)」演算法 (預設單次分派 50 組)。其使得請求的等待時長由傳統殘酷的 `O(N)` (所有伺服器響應相加)，極端縮成 `O(1)` (僅耗時於所有伺服器中最慢的那一台) 並徹底迴避檔案描述詞 (FD) 瞬間掏空的窘境。背景垃圾回收 (GC) 也大量使用 `setImmediate` 主動讓出執行緒減緩抖動 (Jitter)。
 
 ```mermaid
 sequenceDiagram
@@ -268,7 +270,7 @@ AAG-Core 把所有可以替換的商業邏輯（如：速率限制 Token Bucket 
 **原生動態注入優勢與安全邊界：**
 因為 `ProxyServer` 在最初步已經向 `IAuthStore` 解析完畢租戶的檔案，所以往後排期的中介軟體 (Middlewares) 只需要專注當下：他們能直接由 `context.auth.pluginConfig` 變現該租戶「獨一無二」的自定義修改，無須向外發出多餘網路請求。
 - **MemoryRateLimitStore GC 上限**：原生預設限流器擁有最大 Token Bucket 上限（`maxBuckets` 預設 150000）。面對殭屍 ID 攻擊 (DDoS) 時將自動丟棄老舊桶避免記憶體爆破。
-- **Regex LRU 緩存機制**：`DataMaskingMiddleware` 取代了無窮增長的 Static Cache，並引入 Least Recently Used 防禦機制 (`system.regexCacheSize` 預設 10000)，嚴防 SaaS 客戶動態變更 `pluginConfig` 導致記憶體溢出。
+- **Regex Batch LRU 緩存機制**：`DataMaskingMiddleware` / `ProxyServer` 取代了無窮增長的 Static Cache，並引入 Least Recently Used 防禦機制 (`system.regexCacheSize` 預設 10000)，更進階設計為觸頂一次性清除最舊 10% 記憶體，嚴防 SaaS 客戶動態變更且清除導致的阻塞級抖動 (CPU Jitter)，防護記憶體溢出。
 
 ```mermaid
 flowchart TD
@@ -292,8 +294,10 @@ AAG-Core 全面支援 SaaS / PaaS 等級架構，讓平台上的「租戶 (Tenan
 - 使用者的 `AuthKey` 在驗證時支援動態攜帶 `mcpServers` 物件結構與唯一的 `tenantId` 標籤。
 - 代理層在執行 (`ListTools` 列表查詢, `CallTool` 工具執行) 階段，會於空中「無感合併」全域伺服器與該租戶的私有伺服器，造就統一的執行層。
 
-**O(1) 連線共用與底層 RCE 防護機制：**
+**效能池與隔離管制 (Limits & Sandboxing)：**
+- **資源綁定抗禦 (Resource Limits)**：支援 `system.maxTenantServers` 給予強硬伺服器上限，杜絕了資源耗盡攻擊，任何超過配額之連接將被冷酷駁回。
 - **`tenantId` 絕對隔離**：為了避免同一個公司的 10 萬名員工向同一個私有 MCP 發送請求時，產生了 10 萬個重疊子行程，`ClientManager` 會將 `${tenantId}::${serverId}` 作為主體實例的連線池 Key。這達到了變態級別的記憶體 O(1) 利用率，同個租約能安全地被多工（Multiplex）。
+- **機密萃取隔離 (SSRD Blocks)**：伺服器端請求欺騙是 BYO-MCP 最核心的漏洞威脅。系統現已切分 Scope：專屬於租戶建立的 MCP 伺服器，嚴禁享受由底層 `SecretStore` 給予的還原授權 (ResolveSecret)，而是以純文字派送。僅存在全域的系統伺服器才能注入底層機密。
 - **`allowStdio` 命令防禦鎖**：開放與接受租戶「自帶伺服器」往往夾帶一個致命的資安隱患：遠端程式碼執行 (RCE)。如果租戶故意上傳惡意的 `stdio` 行程檔（像是直接寫死 `rm -rf /`），系統將引火自焚。為此，核心內建全域系統級的 `allowStdio` 鐵門（預設為 `false` 關閉）。在 SaaS 環境下，系統會無情拒絕租戶定義的本地進程，強制所有外部 MCP 路由經由標準且隔離好的 HTTP/SSE 協定發送，硬限制了容器防線。
 
 ---

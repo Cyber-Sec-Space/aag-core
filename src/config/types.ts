@@ -45,6 +45,7 @@ export const AuthKeySchema = z.object({
   createdAt: z.string().optional(),
   revoked: z.boolean().default(false),
   permissions: z.object({
+    maxServers: z.number().int().nonnegative().optional(),
     allowedServers: z.array(z.string()).optional(),
     deniedServers: z.array(z.string()).optional(),
     allowedTools: z.array(z.string()).optional(),
@@ -72,7 +73,10 @@ export const SystemConfigSchema = z.object({
   reconnectTimeoutMs: z.number().int().positive().optional().default(5000),
   regexCacheSize: z.number().int().positive().optional().default(10000),
   authCacheSize: z.number().int().positive().optional().default(10000),
-  maxConcurrentSessions: z.number().int().positive().optional().default(10000)
+  authCacheTtlMs: z.number().int().positive().optional().default(60000),
+  authCacheGcIntervalMs: z.number().int().positive().optional().default(300000),
+  maxConcurrentSessions: z.number().int().positive().optional().default(10000),
+  maxTenantServers: z.number().int().nonnegative().optional().default(10)
 });
 
 export const PluginConfigSchema = z.object({

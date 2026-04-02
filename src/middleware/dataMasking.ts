@@ -39,9 +39,13 @@ export class DataMaskingMiddleware implements ProxyMiddleware {
                         DataMaskingMiddleware.pluginRegexCache.set(r, regex);
                         
                         if (DataMaskingMiddleware.pluginRegexCache.size > maxSize) {
-                            const firstKey = DataMaskingMiddleware.pluginRegexCache.keys().next().value;
-                            /* istanbul ignore next - Generator boundary protection */
-                            if (firstKey !== undefined) DataMaskingMiddleware.pluginRegexCache.delete(firstKey);
+                            const clearCount = Math.max(1, Math.floor(maxSize * 0.10));
+                            const iter = DataMaskingMiddleware.pluginRegexCache.keys();
+                            for(let i = 0; i < clearCount; i++) {
+                                const key = iter.next().value;
+                                /* istanbul ignore next - Generator boundary protection */
+                                if (key !== undefined) DataMaskingMiddleware.pluginRegexCache.delete(key);
+                            }
                         }
                     } else {
                         // LRU behavior

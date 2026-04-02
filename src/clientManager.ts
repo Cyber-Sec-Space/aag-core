@@ -297,6 +297,15 @@ export class ClientManager {
       return auth.tenantId || auth.key || "anonymous";
   }
 
+  private validateTenantServersLimit(auth?: AuthKey) {
+      if (!auth || !auth.mcpServers) return;
+      const tenantServerCount = Object.keys(auth.mcpServers).length;
+      const limit = auth.permissions?.maxServers ?? this.configStore.getConfig()?.system?.maxTenantServers ?? 10;
+      if (tenantServerCount > limit) {
+          throw new AagConfigurationError(`Tenant exceeds maximum allowed servers (defined: ${tenantServerCount}, max: ${limit})`);
+      }
+  }
+
   private async _resolveJIT(id: string, managed: ManagedClient): Promise<Client | undefined> {
     managed.lastAccessed = Date.now();
 
@@ -354,6 +363,7 @@ export class ClientManager {
   }
 
   public async getClientJIT(id: string, auth?: AuthKey): Promise<Client | undefined> {
+    this.validateTenantServersLimit(auth);
     const globalManaged = this.clients.get(id);
     if (globalManaged && !globalManaged.isTenantContext) {
         return this._resolveJIT(id, globalManaged);
@@ -399,6 +409,7 @@ export class ClientManager {
   }
 
   public async getClientsJIT(auth?: AuthKey): Promise<Map<string, Client>> {
+    this.validateTenantServersLimit(auth);
     const map = new Map<string, Client>();
     
     const idsToResolve = new Set<string>(this.globalServerIds);

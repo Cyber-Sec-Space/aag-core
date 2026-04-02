@@ -34,7 +34,7 @@ export class ProxyServer {
   private disableEnvFallback: boolean = false;
   private middlewares: ProxyMiddleware[] = [];
   private authCache: Map<string, { auth: AuthKey; expiresAt: number }> = new Map();
-  private authCacheTTL = 60000;
+  private authCacheTTL: number;
   private authCacheGcInterval: ReturnType<typeof setInterval>;
 
   constructor(
@@ -58,6 +58,9 @@ export class ProxyServer {
         this.disableEnvFallback = options.disableEnvFallback;
     }
 
+    this.authCacheTTL = this.configStore.getConfig()?.system?.authCacheTtlMs ?? 60000;
+    const gcIntervalMs = this.configStore.getConfig()?.system?.authCacheGcIntervalMs ?? 300000;
+
     this.server = new Server(
       { name: "mcp-proxy-server", version: "1.0.0" },
       { capabilities: { tools: {} } }
@@ -73,7 +76,7 @@ export class ProxyServer {
                 this.authCache.delete(key);
             }
         }
-    }, 300000); // Sweep every 5 minutes
+    }, gcIntervalMs); // Sweep every configured interval
     this.authCacheGcInterval.unref(); // Do not block Node.js exit
   }
 
@@ -174,10 +177,13 @@ export class ProxyServer {
        
        const maxSize = this.configStore.getConfig()?.system?.regexCacheSize ?? 10000;
        if (this.regexPatternCache.size > maxSize) {
-           /* istanbul ignore next - Extreme boundary protection */
-           const firstKey = this.regexPatternCache.keys().next().value;
-           /* istanbul ignore next - Extreme boundary protection */
-           if (firstKey !== undefined) this.regexPatternCache.delete(firstKey);
+           const clearCount = Math.max(1, Math.floor(maxSize * 0.10));
+           const iter = this.regexPatternCache.keys();
+           for(let i = 0; i < clearCount; i++) {
+               const key = iter.next().value;
+               /* istanbul ignore next - Extreme boundary protection */
+               if (key !== undefined) this.regexPatternCache.delete(key);
+           }
        }
     } else {
        // LRU Refresh
@@ -251,6 +257,7 @@ export class ProxyServer {
       
       let targetServerId: string | null = null;
       let actualToolName: string | null = null;
+      let isGlobalServer = false;
       
       const prefixIndex = requestedName.indexOf("___");
       /* istanbul ignore else - False branch covered implicitly via ToolNotFoundError below */
@@ -267,6 +274,7 @@ export class ProxyServer {
         if (existsGlobal || existsTenant) {
             targetServerId = parsedServerId;
             actualToolName = requestedName.substring(prefixIndex + 3);
+            isGlobalServer = existsGlobal;
         }
       }
 
@@ -302,7 +310,11 @@ export class ProxyServer {
       }
 
       if (config.authInjection?.type === "payload" && config.authInjection.key) {
-        args[config.authInjection.key] = await this.secretStore.resolveSecret(config.authInjection.value || "");
+        if (isGlobalServer) {
+            args[config.authInjection.key] = await this.secretStore.resolveSecret(config.authInjection.value || "");
+        } else {
+            args[config.authInjection.key] = config.authInjection.value || "";
+        }
       }
 
       try {
