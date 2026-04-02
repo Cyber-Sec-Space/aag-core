@@ -148,6 +148,22 @@ AAG-Core fully supports SaaS architectures where tenants can define their own pr
 - **SSRD Secure Borders**: Target `SecretStore` payload injections (`authInjection.type="payload"`) explicitly separate global servers from dynamic tenant servers. Any config generated via a Tenant skips automated runtime decryption, protecting the `SecretStore` from OS-level Server-Side Request Deception.
 - **`allowStdio` RCE Gate**: Host architectures utilizing `BYO-MCP` are inherently susceptible to Remote Code Execution (RCE) if tenants inject malicious commands into `stdio` definitions. To mitigate this risk natively, the gateway exposes an `allowStdio` global lock (defaults to `false`), forcing all external tenant logic strictly through HTTP/SSE boundaries, preventing malicious sub-process forks.
 
+```mermaid
+flowchart TD
+    Req[Requests Tools/Execution] --> Auth[Parse Context AuthKey]
+    Auth --> Detect{Examine Tenant mcpServers}
+    Detect -- Exceeds maxServers Limit --> Err[Reject: Resource DDoS Exhausted]
+    Detect -- Limit Valid --> Merge[Transitively Merge Global + Tenant Servers]
+    
+    Merge --> Target{Resolve Target Server Properties}
+    
+    Target -- Configured Globally --> Secret1[Allow Host SecretStore Decryption]
+    Target -- Configured by Tenant --> Secret2[Block SecretStore - Inject Literal Text Only]
+    
+    Secret1 --> Pool(Allocate Connection: global::serverId)
+    Secret2 --> PoolT(Allocate Connection: tenantId::serverId)
+```
+
 ---
 
 <br/>
@@ -299,5 +315,21 @@ AAG-Core 全面支援 SaaS / PaaS 等級架構，讓平台上的「租戶 (Tenan
 - **`tenantId` 絕對隔離**：為了避免同一個公司的 10 萬名員工向同一個私有 MCP 發送請求時，產生了 10 萬個重疊子行程，`ClientManager` 會將 `${tenantId}::${serverId}` 作為主體實例的連線池 Key。這達到了變態級別的記憶體 O(1) 利用率，同個租約能安全地被多工（Multiplex）。
 - **機密萃取隔離 (SSRD Blocks)**：伺服器端請求欺騙是 BYO-MCP 最核心的漏洞威脅。系統現已切分 Scope：專屬於租戶建立的 MCP 伺服器，嚴禁享受由底層 `SecretStore` 給予的還原授權 (ResolveSecret)，而是以純文字派送。僅存在全域的系統伺服器才能注入底層機密。
 - **`allowStdio` 命令防禦鎖**：開放與接受租戶「自帶伺服器」往往夾帶一個致命的資安隱患：遠端程式碼執行 (RCE)。如果租戶故意上傳惡意的 `stdio` 行程檔（像是直接寫死 `rm -rf /`），系統將引火自焚。為此，核心內建全域系統級的 `allowStdio` 鐵門（預設為 `false` 關閉）。在 SaaS 環境下，系統會無情拒絕租戶定義的本地進程，強制所有外部 MCP 路由經由標準且隔離好的 HTTP/SSE 協定發送，硬限制了容器防線。
+
+```mermaid
+flowchart TD
+    Req[請求執行工具/伺服器表] --> Auth[解析租戶 AuthKey 變數]
+    Auth --> Detect{檢查該租戶掛載的 mcpServers}
+    Detect -- 超出系統與權限最大上限 --> Err[拒絕請求: 防止 DDoS 資源耗盡]
+    Detect -- 數量符合配額 --> Merge[無縫合併 Global 全域與 Tenant 租戶伺服器]
+    
+    Merge --> Target{判定目標伺服器的擁有者 (Owner)}
+    
+    Target -- 系統全域擁有 --> Secret1[允許底層 SecretStore 解析密碼金鑰]
+    Target -- 由租戶私有提供 --> Secret2[阻截 SecretStore 調用 ─ 僅以純文字明碼傳遞]
+    
+    Secret1 --> Pool(分派至連線池鍵值: global::serverId)
+    Secret2 --> PoolT(分派至防互撞鍵值: tenantId::serverId)
+```
 
 ---

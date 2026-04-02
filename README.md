@@ -96,25 +96,48 @@ await DataMaskingPlugin.register({ proxyServer: proxy, configStore, logger, opti
 // The proxy.server is an MCP Server instance ready to be connected to an incoming transport interface.
 ```
 
-### Plugin Configuration (JSON Registry)
+### SaaS BYO-MCP & Plugin Configuration Example (JSON)
 
-Plugins are dynamically loaded and allow for per-user parameter overrides in multi-user environments. To activate plugins, your configuration object (served by `IConfigStore`) should map them in the global `plugins` array:
+In a true SaaS environment, you can dynamically configure tenant-specific Private MCP servers, limits (`maxServers`), and plugin settings all nested under a specific `aiId` globally.
 
 ```json
 {
+  "system": {
+    "maxTenantServers": 10,
+    "allowStdio": false
+  },
   "plugins": [
     {
       "name": "@cyber-sec.space/aag-core-rate-limit",
       "options": { "maxRequests": 1000, "windowMs": 60000 }
-    },
-    {
-      "name": "./my-custom-plugin.js"
     }
   ],
-  "mcpServers": { /* ... */ },
+  "mcpServers": {
+    "global-weather": {
+      "command": "node",
+      "args": ["weather-server.js"]
+    }
+  },
   "aiKeys": {
     "premium-user-id": {
-      "permissions": { /* ... */ },
+      "tenantId": "org_apple_inc",
+      "permissions": {
+        "maxServers": 5,
+        "allowedTools": ["*"]
+      },
+      "mcpServers": {
+        "tenant-private-db": {
+          "command": "npx",
+          "args": ["-y", "@modelcontextprotocol/server-postgres", "postgresql://db..."],
+          "authInjection": { 
+             "type": "payload", 
+             "value": "secret_key" 
+             // 🛡️ SECURITY SSRD Block: Since this is defined inside a Tenant, 
+             // "secret_key" will NOT be resolved against the Host's SecretStore. 
+             // It will be passed literally as the text "secret_key" to prevent exfiltration.
+          }
+        }
+      },
       "pluginConfig": {
         "aag-core-rate-limit": { "maxRequests": 5000 },
         "aag-core-data-masking": { "rules": ["(?i)credit_card"] }
@@ -255,25 +278,48 @@ await DataMaskingPlugin.register({ proxyServer: proxy, configStore, logger, opti
 // proxy.server 是一個等待接收客戶端請求的 MCP Server 執行個體。
 ```
 
-### 插件註冊表設定指南 (Plugin Configuration)
+### SaaS 多租戶自帶伺服器與外掛設定範例 (JSON)
 
-在新的生態系架構中，插件採用動態加載。您必須在設定檔 (由 `IConfigStore` 提供) 根目錄的 `plugins` 陣列中宣告它們。如果您身處多使用者環境，您還可以針對每個 `aiId` 分別宣告並覆寫專屬的插件參數 (`pluginConfig`)：
+在真實的 SaaS 環境中，您可以針對個別 `aiId` 動態掛載租戶專屬的私有 MCP 伺服器、伺服器數量配額 (`maxServers`) 以及中介軟體參數覆寫。
 
 ```json
 {
+  "system": {
+    "maxTenantServers": 10,
+    "allowStdio": false
+  },
   "plugins": [
     {
       "name": "@cyber-sec.space/aag-core-rate-limit",
       "options": { "maxRequests": 1000, "windowMs": 60000 }
-    },
-    {
-      "name": "./my-custom-plugin.js"
     }
   ],
-  "mcpServers": { /* ... */ },
+  "mcpServers": {
+    "global-weather": {
+      "command": "node",
+      "args": ["weather-server.js"]
+    }
+  },
   "aiKeys": {
     "premium-user-id": {
-      "permissions": { /* ... */ },
+      "tenantId": "org_apple_inc",
+      "permissions": {
+        "maxServers": 5,
+        "allowedTools": ["*"]
+      },
+      "mcpServers": {
+        "tenant-private-db": {
+          "command": "npx",
+          "args": ["-y", "@modelcontextprotocol/server-postgres", "postgresql://db..."],
+          "authInjection": { 
+             "type": "payload", 
+             "value": "secret_key" 
+             // 🛡️ SSRD 資安阻擋: 因為這台機器是由租戶定義的，
+             // "secret_key" 將「絕對不會」被引擎底層的 SecretStore 解析或解密。
+             // 為了防範伺服器請求欺騙外洩，它只會被當作純文字 (Literal text) 傳遞！
+          }
+        }
+      },
       "pluginConfig": {
         "aag-core-rate-limit": { "maxRequests": 5000 },
         "aag-core-data-masking": { "rules": ["(?i)credit_card"] }
