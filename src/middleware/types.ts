@@ -1,3 +1,5 @@
+import { AuthKey } from "../config/types.js";
+
 export interface ProxyContext {
     /** The downstream target server identifier (e.g. 'github') */
     serverId: string;
@@ -5,6 +7,8 @@ export interface ProxyContext {
     toolName: string;
     /** The authenticated identifier of the AI agent making the proxy request */
     aiId: string;
+    /** The fully-resolved authenticated identity profile */
+    auth: AuthKey;
 }
 
 export interface ProxyMiddleware {

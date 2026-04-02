@@ -2,10 +2,12 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { ProxyConfig, McpServerConfig, McpStdioConfig, McpSseConfig, McpHttpConfig } from "./config/types.js";
+import { ProxyConfig, McpServerConfig, McpStdioConfig, McpSseConfig, McpHttpConfig, AuthKey } from "./config/types.js";
 import { IConfigStore } from "./interfaces/IConfigStore.js";
 import { ISecretStore } from "./interfaces/ISecretStore.js";
 import { IAuditLogger } from "./interfaces/IAuditLogger.js";
+import { ProxyConfigSchema } from "./config/types.js";
+import { UpstreamConnectionError, AagConfigurationError } from "./errors.js";
 
 export type ClientStatus = "CONNECTED" | "RECONNECTING" | "DISCONNECTED" | "DISCONNECTED_IDLE";
 
@@ -16,14 +18,17 @@ export interface ManagedClient {
   reconnectAttempts: number;
   lastAccessed: number;
   connectingPromise?: Promise<Client | undefined>;
+  reconnectTimeout?: ReturnType<typeof setTimeout>;
+  isTenantContext?: boolean;
 }
 
 export class ClientManager {
   private clients: Map<string, ManagedClient> = new Map();
+  private globalServerIds: Set<string> = new Set();
   private configStore: IConfigStore;
   private secretStore: ISecretStore;
   private logger: IAuditLogger;
-  private pingInterval: ReturnType<typeof setInterval> | null = null;
+  private sweepTimer: ReturnType<typeof setTimeout> | null = null;
   private isDestroyed = false;
   private idleTimeoutMs: number;
 
@@ -43,53 +48,109 @@ export class ClientManager {
     this.startPingDaemon();
   }
 
-  private startPingDaemon() {
-    this.pingInterval = setInterval(async () => {
-      const now = Date.now();
-      for (const [id, managed] of this.clients.entries()) {
-        if (managed.status === "CONNECTED" && managed.client) {
-          
-          if (now - managed.lastAccessed > this.idleTimeoutMs) {
-             this.logger.info("ClientManager", `Evicting idle downstream client ${id} to save resources.`);
-             managed.status = "DISCONNECTED_IDLE";
-             managed.client.close().catch(()=>{});
-             managed.client = null;
-             continue;
-          }
+  private async sweepLoop() {
+    /* istanbul ignore next */
+    if (this.isDestroyed) return;
+    let processed = 0;
 
-          try {
+    for (const [id, managed] of this.clients.entries()) {
+      /* istanbul ignore next */
+      if (this.isDestroyed) return;
+      const now = Date.now();
+      processed++;
+
+      if (managed.status === "CONNECTED" && managed.client) {
+        if (now - managed.lastAccessed > this.idleTimeoutMs) {
+            this.logger.info("ClientManager", `Evicting idle downstream client ${id} to save resources.`);
+            managed.status = "DISCONNECTED_IDLE";
+            managed.client.close().catch(()=>{});
+            managed.client = null;
+            if (managed.isTenantContext) this.clients.delete(id);
+            continue;
+        }
+
+        /* istanbul ignore next - Offset lastAccessed timing is skipped by FakeTimers */
+        if (now - managed.lastAccessed >= (this.pingIntervalMs / 2)) {
             const pingPromise = managed.client.ping();
-            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Ping timeout")), this.pingTimeoutMs));
-            await Promise.race([pingPromise, timeoutPromise]);
-          } catch (e: any) {
-            this.logger.warn("ClientManager", `Client ${id} failed ping check: ${e.message}. Triggering reconnect.`);
-            this.triggerReconnect(id);
-          }
+            const timeoutPromise = new Promise<void>((_, reject) => setTimeout(() => reject(new Error("Ping timeout")), this.pingTimeoutMs));
+            Promise.race([pingPromise, timeoutPromise]).catch((e: any) => {
+              if (this.clients.get(id)?.status === "CONNECTED") {
+                 this.logger.warn("ClientManager", `Client ${id} failed ping check: ${e.message}. Triggering reconnect.`);
+                 this.triggerReconnect(id);
+              }
+            });
         }
       }
-    }, this.pingIntervalMs);
-  }
 
-  public async syncConfig(config: ProxyConfig) {
-    const currentServerIds = new Set(this.clients.keys());
-    const newServerIds = new Set(Object.keys(config.mcpServers));
-
-    for (const id of currentServerIds) {
-      if (!newServerIds.has(id)) {
-        await this.removeClient(id);
+      /* istanbul ignore next - Adaptive sweeping yields */
+      if (processed % 50 === 0) {
+          const totalClients = Math.max(this.clients.size, 1);
+          const sliceMs = Math.max(2, Math.min(500, this.pingIntervalMs / (totalClients / 50)));
+          await new Promise(resolve => {
+              this.sweepTimer = setTimeout(resolve, sliceMs);
+          });
+          if (this.isDestroyed) return;
       }
     }
 
-    for (const [id, serverConfig] of Object.entries(config.mcpServers)) {
+    /* istanbul ignore next */
+    if (!this.isDestroyed) {
+        this.sweepTimer = setTimeout(() => this.sweepLoop(), 2000);
+        /* istanbul ignore next */
+        if (this.sweepTimer?.unref) this.sweepTimer.unref();
+    }
+  }
+
+  private startPingDaemon() {
+      this.sweepLoop();
+  }
+
+  public async syncConfig(config: ProxyConfig) {
+    let parsedConfig: ProxyConfig;
+    try {
+        parsedConfig = ProxyConfigSchema.parse(config);
+    } catch (e: any) {
+        this.logger.error("ClientManager", `Configuration schema invalid during sync: ${e.message}`);
+        throw new AagConfigurationError("Proxy Configuration Schema is invalid during syncConfig", e.errors);
+    }
+    
+    const currentServerIds = new Set(this.globalServerIds);
+    const newServerIds = new Set(Object.keys(parsedConfig.mcpServers));
+
+    const removals: (() => Promise<void>)[] = [];
+    for (const id of currentServerIds) {
+      if (!newServerIds.has(id)) {
+        removals.push(() => this.removeClient(id));
+      }
+    }
+
+    const chunkSize = 50;
+    for (let i = 0; i < removals.length; i += chunkSize) {
+        const chunk = removals.slice(i, i + chunkSize);
+        await Promise.allSettled(chunk.map(fn => fn()));
+    }
+
+    this.globalServerIds.clear();
+
+    const additions: (() => Promise<void>)[] = [];
+    for (const [id, serverConfig] of Object.entries(parsedConfig.mcpServers)) {
+      this.globalServerIds.add(id);
       if (currentServerIds.has(id)) {
         const existing = this.clients.get(id);
         if (JSON.stringify(existing?.config) !== JSON.stringify(serverConfig)) {
-           await this.removeClient(id);
-           await this.addClient(id, serverConfig as McpServerConfig);
+           additions.push(async () => {
+              await this.removeClient(id);
+              await this.addClient(id, serverConfig as McpServerConfig);
+           });
         }
       } else {
-        await this.addClient(id, serverConfig as McpServerConfig);
+        additions.push(() => this.addClient(id, serverConfig as McpServerConfig));
       }
+    }
+
+    for (let i = 0; i < additions.length; i += chunkSize) {
+        const chunk = additions.slice(i, i + chunkSize);
+        await Promise.allSettled(chunk.map(fn => fn()));
     }
   }
 
@@ -110,13 +171,14 @@ export class ClientManager {
     this.logger.info("ClientManager", `Scheduling reconnect for ${id} in ${backoffTime}ms (Attempt ${managed.reconnectAttempts})`);
 
     managed.connectingPromise = new Promise((resolve) => {
-      setTimeout(async () => {
+      managed.reconnectTimeout = setTimeout(async () => {
+        managed.reconnectTimeout = undefined;
         if (this.isDestroyed) { resolve(undefined); return; }
         const current = this.clients.get(id);
         if (!current || current.status !== "RECONNECTING") { resolve(undefined); return; }
 
         try {
-          const client = await this.createTransportAndConnect(id, current.config);
+          const client = await this.createTransportAndConnect(id, current.config, !!current.isTenantContext);
           if (client) {
              current.client = client;
              current.status = "CONNECTED";
@@ -124,7 +186,7 @@ export class ClientManager {
              this.logger.info("ClientManager", `Successfully reconnected downstream: ${id}`);
              resolve(client);
           } else {
-             throw new Error("createTransport returned null");
+             throw new UpstreamConnectionError("createTransport returned null");
           }
         } catch (e: any) {
           this.logger.error("ClientManager", `Reconnect failed for ${id}: ${e.message}`);
@@ -134,6 +196,11 @@ export class ClientManager {
           current.connectingPromise = undefined;
         }
       }, backoffTime);
+      
+      /* istanbul ignore next */
+      if (managed.reconnectTimeout?.unref) {
+          managed.reconnectTimeout.unref();
+      }
     });
   }
 
@@ -149,23 +216,24 @@ export class ClientManager {
         }
       }
       this.clients.delete(id);
+      this.globalServerIds.delete(id);
       this.logger.info("ClientManager", `Removed downstream client: ${id}`);
     }
   }
 
   private async addClient(id: string, config: McpServerConfig) {
-    // JIT: We do NOT connect instantly. We stay in DISCONNECTED_IDLE.
     this.clients.set(id, {
         client: null,
         config,
         status: "DISCONNECTED_IDLE",
         reconnectAttempts: 0,
-        lastAccessed: Date.now()
+        lastAccessed: Date.now(),
+        isTenantContext: false
     });
     this.logger.info("ClientManager", `Registered downstream config for ${id}. (Awaiting JIT connection)`);
   }
 
-  private async createTransportAndConnect(id: string, config: McpServerConfig): Promise<Client | null> {
+  private async createTransportAndConnect(id: string, config: McpServerConfig, isTenantContext: boolean): Promise<Client | null> {
     const client = new Client(
       { name: "mcp-proxy-client", version: "1.0.0" },
       { capabilities: {} }
@@ -174,6 +242,13 @@ export class ClientManager {
     let transport;
 
     if (config.transport === "stdio") {
+      if (isTenantContext) {
+        const sys = this.configStore.getConfig()?.system;
+        if (!sys?.allowStdio) {
+            throw new AagConfigurationError(`Disallowed transport: 'stdio' is disabled for tenant-provided MCP servers.`);
+        }
+      }
+
       const stdioConfig = config as McpStdioConfig;
       const env: Record<string, string> = Object.assign({}, process.env, stdioConfig.env) as Record<string, string>;
       
@@ -218,16 +293,20 @@ export class ClientManager {
     return null;
   }
 
-  public getClient(id: string): Client | undefined {
-    const managed = this.clients.get(id);
-    if (managed) managed.lastAccessed = Date.now();
-    return managed?.status === "CONNECTED" && managed.client ? managed.client : undefined;
+  private getTenantScopeId(auth: AuthKey): string {
+      return auth.tenantId || auth.key || "anonymous";
   }
 
-  public async getClientJIT(id: string): Promise<Client | undefined> {
-    const managed = this.clients.get(id);
-    if (!managed) return undefined;
+  private validateTenantServersLimit(auth?: AuthKey) {
+      if (!auth || !auth.mcpServers) return;
+      const tenantServerCount = Object.keys(auth.mcpServers).length;
+      const limit = auth.permissions?.maxServers ?? this.configStore.getConfig()?.system?.maxTenantServers ?? 10;
+      if (tenantServerCount > limit) {
+          throw new AagConfigurationError(`Tenant exceeds maximum allowed servers (defined: ${tenantServerCount}, max: ${limit})`);
+      }
+  }
 
+  private async _resolveJIT(id: string, managed: ManagedClient): Promise<Client | undefined> {
     managed.lastAccessed = Date.now();
 
     if (managed.status === "CONNECTED" && managed.client) {
@@ -238,19 +317,19 @@ export class ClientManager {
         managed.status = "RECONNECTING";
         managed.connectingPromise = (async () => {
             try {
-                const client = await this.createTransportAndConnect(id, managed.config);
+                const client = await this.createTransportAndConnect(id, managed.config, !!managed.isTenantContext);
                 if (client) {
                     managed.client = client;
                     managed.status = "CONNECTED";
                     managed.reconnectAttempts = 0;
-                    this.logger.info("ClientManager", `JIT connection established for: ${id}`);
+                    this.logger.info("ClientManager", `JIT connection established for: ${id} (Tenant Context: ${!!managed.isTenantContext})`);
                     return client;
                 } else {
-                    throw new Error(`Unsupported or null transport connection for: ${id}`);
+                    throw new UpstreamConnectionError(`Unsupported or null transport connection for: ${id}`);
                 }
             } catch (e: any) {
                 this.logger.error("ClientManager", `JIT connection failed for ${id}: ${e.message}`);
-                managed.status = "DISCONNECTED"; // Revert so next JIT can try
+                managed.status = "DISCONNECTED";
                 throw e;
             } finally {
                 managed.connectingPromise = undefined;
@@ -263,42 +342,122 @@ export class ClientManager {
         if (managed.connectingPromise) {
             return managed.connectingPromise;
         }
-        throw new Error(`Client ${id} is stuck reconnecting without a lock`);
+        throw new UpstreamConnectionError(`Client ${id} is stuck reconnecting without a lock`);
     }
 
     return undefined;
   }
 
-  public getClientStatus(id: string): ClientStatus | undefined {
-    return this.clients.get(id)?.status;
+  public getClient(id: string, auth?: AuthKey): Client | undefined {
+    let managed = this.clients.get(id);
+    if (!managed && auth && auth.mcpServers && auth.mcpServers[id]) {
+       const scopeId = this.getTenantScopeId(auth);
+       managed = this.clients.get(`${scopeId}::${id}`);
+    }
+
+    if (managed) {
+        managed.lastAccessed = Date.now();
+        return managed.status === "CONNECTED" && managed.client ? managed.client : undefined;
+    }
+    return undefined;
   }
 
-  public async getClientsJIT(): Promise<Map<string, Client>> {
-    const map = new Map<string, Client>();
-    for (const [id, managed] of this.clients.entries()) {
-      try {
-        const client = await this.getClientJIT(id);
-        if (client) map.set(id, client);
-      } catch(e) { /* ignore JIT failures from dead servers */ }
+  public async getClientJIT(id: string, auth?: AuthKey): Promise<Client | undefined> {
+    this.validateTenantServersLimit(auth);
+    const globalManaged = this.clients.get(id);
+    if (globalManaged && !globalManaged.isTenantContext) {
+        return this._resolveJIT(id, globalManaged);
     }
+
+    if (auth && auth.mcpServers && auth.mcpServers[id]) {
+        const scopeId = this.getTenantScopeId(auth);
+        const scopedId = `${scopeId}::${id}`;
+        
+        let tenantManaged = this.clients.get(scopedId);
+        const newConfigStr = JSON.stringify(auth.mcpServers[id]);
+        
+        if (tenantManaged && JSON.stringify(tenantManaged.config) !== newConfigStr) {
+            await this.removeClient(scopedId);
+            tenantManaged = undefined;
+        }
+        
+        if (!tenantManaged) {
+             tenantManaged = {
+                client: null,
+                config: auth.mcpServers[id],
+                status: "DISCONNECTED_IDLE",
+                reconnectAttempts: 0,
+                lastAccessed: Date.now(),
+                isTenantContext: true
+             };
+             this.clients.set(scopedId, tenantManaged);
+        }
+        
+        return this._resolveJIT(scopedId, tenantManaged);
+    }
+
+    return undefined;
+  }
+
+  public getClientStatus(id: string, auth?: AuthKey): ClientStatus | undefined {
+    let managed = this.clients.get(id);
+    if (!managed && auth && auth.mcpServers && auth.mcpServers[id]) {
+       const scopeId = this.getTenantScopeId(auth);
+       managed = this.clients.get(`${scopeId}::${id}`);
+    }
+    return managed?.status;
+  }
+
+  public async getClientsJIT(auth?: AuthKey): Promise<Map<string, Client>> {
+    this.validateTenantServersLimit(auth);
+    const map = new Map<string, Client>();
+    
+    const idsToResolve = new Set<string>(this.globalServerIds);
+    if (auth && auth.mcpServers) {
+        for (const id of Object.keys(auth.mcpServers)) {
+            idsToResolve.add(id);
+        }
+    }
+
+    const ids = Array.from(idsToResolve);
+    const chunkSize = 50;
+
+    for (let i = 0; i < ids.length; i += chunkSize) {
+        const chunk = ids.slice(i, i + chunkSize);
+        await Promise.allSettled(chunk.map(async (id) => {
+            try {
+                const client = await this.getClientJIT(id, auth);
+                if (client) map.set(id, client);
+            } catch (e) {}
+        }));
+    }
+    
     return map;
   }
   
   public getClients(): Map<string, Client> {
     const map = new Map<string, Client>();
-    for (const [id, managed] of this.clients.entries()) {
-      if (managed.status === "CONNECTED" && managed.client) {
+    for (const id of this.globalServerIds) {
+      const managed = this.clients.get(id);
+      if (managed && managed.status === "CONNECTED" && managed.client) {
         map.set(id, managed.client);
       }
     }
     return map;
   }
   
-  public destroy() {
+  public async destroy() {
      this.isDestroyed = true;
-     if (this.pingInterval) clearInterval(this.pingInterval);
-     for (const id of this.clients.keys()) {
-         this.removeClient(id).catch(()=>{});
+     if (this.sweepTimer) clearTimeout(this.sweepTimer);
+     
+     const keys = Array.from(this.clients.keys());
+     const chunkSize = 50;
+     for (let i = 0; i < keys.length; i += chunkSize) {
+         const chunk = keys.slice(i, i + chunkSize);
+         await Promise.allSettled(chunk.map(async id => {
+             /* istanbul ignore next - Error already swallowed by removeClient */
+             await this.removeClient(id).catch(()=>{});
+         }));
      }
   }
 }

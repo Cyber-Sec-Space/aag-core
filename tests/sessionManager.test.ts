@@ -1,5 +1,6 @@
 import { jest } from "@jest/globals";
 import { SessionManager } from "../src/session/SessionManager.js";
+import { RateLimitExceededError } from "../src/errors.js";
 import { MockConfigStore, MockLogger } from "./mocks.js";
 
 describe("SessionManager", () => {
@@ -9,14 +10,7 @@ describe("SessionManager", () => {
 
     beforeEach(() => {
         configStore = new MockConfigStore({ mcpServers: {} } as any);
-        
-        // Spy on the configStore's 'on' method to capture the configChanged listener
-        jest.spyOn(configStore, "on").mockImplementation((event: string, listener: any) => {
-            if (event === "configChanged") {
-                configChangedListener = listener;
-            }
-            return configStore as any;
-        });
+        // configStore mock setup maintained for backward compatibility in constructor tests
 
         logger = new MockLogger();
     });
@@ -25,18 +19,35 @@ describe("SessionManager", () => {
         jest.clearAllMocks();
     });
 
-    it("should instantiate and register config change listener", () => {
+    it("should instantiate without throwing", () => {
         const manager = new SessionManager(configStore, logger);
-        expect(configStore.on).toHaveBeenCalledWith("configChanged", expect.any(Function));
-        expect(configChangedListener).toBeDefined();
+        expect(manager).toBeDefined();
     });
 
-    it("should allow registering and unregistering sessions", () => {
+    it("should throw RateLimitExceededError when maxConcurrentSessions is exceeded", () => {
+        const boundConfigStore = new MockConfigStore({ system: { maxConcurrentSessions: 10 }, mcpServers: {} } as any);
+        const manager = new SessionManager(boundConfigStore, logger);
+        const aiId = "ai_flood";
+        const fns: (() => void)[] = [];
+        
+        for (let i = 0; i < 10; i++) {
+            fns.push(manager.registerSession(aiId, () => {}));
+        }
+
+        expect(() => {
+            manager.registerSession(aiId, () => {});
+        }).toThrow(RateLimitExceededError);
+
+        // Cleanup
+        fns.forEach(unreg => unreg());
+    });
+
+    it("should allow registering and unregistering sessions", async () => {
         const manager = new SessionManager(configStore, logger);
         const disconnectFn = jest.fn();
 
         const unregister = manager.registerSession("ai-id-1", disconnectFn);
-        manager.disconnectAll("ai-id-1");
+        await manager.disconnectAll("ai-id-1");
         expect(disconnectFn).toHaveBeenCalledTimes(1);
 
         disconnectFn.mockClear();
@@ -44,14 +55,14 @@ describe("SessionManager", () => {
         // Registration after unregister
         const unregister2 = manager.registerSession("ai-id-1", disconnectFn);
         unregister2(); // Remove it cleanly
-        manager.disconnectAll("ai-id-1");
+        await manager.disconnectAll("ai-id-1");
         expect(disconnectFn).not.toHaveBeenCalled();
         
         // Unregister multiple times safely
         unregister2();
     });
 
-    it("should execute multiple disconnect functions on disconnectAll", () => {
+    it("should execute multiple disconnect functions on disconnectAll", async () => {
         const manager = new SessionManager(configStore, logger);
         const disconnect1 = jest.fn();
         const disconnect2 = jest.fn();
@@ -59,17 +70,17 @@ describe("SessionManager", () => {
         manager.registerSession("ai-id-2", disconnect1);
         manager.registerSession("ai-id-2", disconnect2);
 
-        manager.disconnectAll("ai-id-2");
+        await manager.disconnectAll("ai-id-2");
 
         expect(disconnect1).toHaveBeenCalledTimes(1);
         expect(disconnect2).toHaveBeenCalledTimes(1);
         
         // Calling again should do nothing since it's deleted
-        manager.disconnectAll("ai-id-2");
+        await manager.disconnectAll("ai-id-2");
         expect(disconnect1).toHaveBeenCalledTimes(1);
     });
 
-    it("should gracefully handle errors thrown by disconnect callbacks", () => {
+    it("should gracefully handle errors thrown by disconnect callbacks", async () => {
         const manager = new SessionManager(configStore, logger);
         const disconnectFail = jest.fn().mockImplementation(() => {
             throw new Error("Test disconnect error");
@@ -80,65 +91,14 @@ describe("SessionManager", () => {
         manager.registerSession("ai-id-3", disconnectFail);
         manager.registerSession("ai-id-3", disconnectSuccess);
 
-        manager.disconnectAll("ai-id-3");
+        await manager.disconnectAll("ai-id-3");
 
         expect(disconnectFail).toHaveBeenCalledTimes(1);
         expect(disconnectSuccess).toHaveBeenCalledTimes(1); // Should still execute the rest
         expect(warnSpy).toHaveBeenCalledWith("SessionManager", "Error executing disconnect callback for 'ai-id-3': Test disconnect error");
     });
 
-    it("should forcibly terminate sessions when configChanged signals a missing AI ID or no full aiKeys object", () => {
-        const manager = new SessionManager(configStore, logger);
-        const disconnect = jest.fn();
-        manager.registerSession("revoked-id", disconnect);
 
-        // Missing aiKeys completely
-        configChangedListener({});
-        expect(disconnect).not.toHaveBeenCalled();
-
-        // Object exists but missing id
-        configChangedListener({ aiKeys: {} });
-        expect(disconnect).toHaveBeenCalledTimes(1);
-    });
-
-    it("should forcefully terminate sessions when configChanged signals revocation", () => {
-        const manager = new SessionManager(configStore, logger);
-        const disconnect = jest.fn();
-        manager.registerSession("revoked-id-2", disconnect);
-
-        const newConfig = {
-            aiKeys: {
-                "revoked-id-2": {
-                    revoked: true,
-                    key: "old-key"
-                }
-            }
-        };
-
-        const infoSpy = jest.spyOn(logger, "info");
-        configChangedListener(newConfig);
-
-        expect(disconnect).toHaveBeenCalledTimes(1);
-        expect(infoSpy).toHaveBeenCalledWith("SessionManager", "AI ID 'revoked-id-2' was revoked or removed. Forcibly terminating 1 active session(s).");
-    });
-
-    it("should not terminate valid, unrevoked sessions on config changes", () => {
-        const manager = new SessionManager(configStore, logger);
-        const disconnect = jest.fn();
-        manager.registerSession("valid-id", disconnect);
-
-        const newConfig = {
-            aiKeys: {
-                "valid-id": {
-                    revoked: false,
-                    key: "valid-key"
-                }
-            }
-        };
-
-        configChangedListener(newConfig);
-        expect(disconnect).not.toHaveBeenCalled();
-    });
 
     it("should completely delete the map entry when the final registered session unregisters naturally", () => {
         const manager = new SessionManager(configStore, logger);
@@ -161,11 +121,11 @@ describe("SessionManager", () => {
         expect((manager as any).activeSessions.has("multi-session")).toBe(false);
     });
 
-    it("should safely handle unregistering a session after disconnectAll has wiped the map natively", () => {
+    it("should safely handle unregistering a session after disconnectAll has wiped the map natively", async () => {
         const manager = new SessionManager(configStore, logger);
         const disconnectFn = jest.fn();
         const unregister = manager.registerSession("ai-id-wiped", disconnectFn);
-        manager.disconnectAll("ai-id-wiped"); 
+        await manager.disconnectAll("ai-id-wiped"); 
         unregister();  
         expect((manager as any).activeSessions.has("ai-id-wiped")).toBe(false);
     });

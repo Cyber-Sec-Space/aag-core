@@ -17,13 +17,13 @@ export const StdioServerSchema = z.object({
 
 export const SseServerSchema = z.object({
   transport: z.literal("sse"),
-  url: z.string(),
+  url: z.string().startsWith("http", { message: "URL must begin with http:// or https://" }),
   authInjection: AuthInjectionSchema.optional()
 });
 
 export const HttpServerSchema = z.object({
   transport: z.literal("http"),
-  url: z.string(),
+  url: z.string().startsWith("http", { message: "URL must begin with http:// or https://" }),
   authInjection: AuthInjectionSchema.optional()
 });
 
@@ -39,30 +39,44 @@ export type McpHttpConfig = z.infer<typeof HttpServerSchema>;
 export type McpServerConfig = McpStdioConfig | McpSseConfig | McpHttpConfig;
 
 export const AuthKeySchema = z.object({
-  key: z.string(),
+  key: z.string().optional(),
   description: z.string().optional(),
-  createdAt: z.string(),
+  tenantId: z.string().optional(),
+  createdAt: z.string().optional(),
   revoked: z.boolean().default(false),
   permissions: z.object({
+    maxServers: z.number().int().nonnegative().optional(),
     allowedServers: z.array(z.string()).optional(),
     deniedServers: z.array(z.string()).optional(),
     allowedTools: z.array(z.string()).optional(),
     deniedTools: z.array(z.string()).optional(),
+    allowedPrompts: z.array(z.string()).optional(),
+    deniedPrompts: z.array(z.string()).optional(),
+    allowedResources: z.array(z.string()).optional(),
+    deniedResources: z.array(z.string()).optional(),
   }).optional(),
   rateLimit: z.object({
-    rpm: z.number().optional(), // Requests Per Minute
-    rph: z.number().optional()  // Requests Per Hour
+    rpm: z.number().int().nonnegative().optional(), // Requests Per Minute
+    rph: z.number().int().nonnegative().optional()  // Requests Per Hour
   }).optional(),
-  pluginConfig: z.record(z.string(), z.any()).optional().default({})
+  pluginConfig: z.record(z.string(), z.any()).optional().default({}),
+  mcpServers: z.record(z.string(), McpServerConfigSchema).optional()
 });
 
 export const SystemConfigSchema = z.object({
-  port: z.number().default(3000),
-  logLevel: z.enum(["INFO", "WARN", "ERROR", "DEBUG"]).default("INFO"),
-  pingIntervalMs: z.number().optional().default(30000),
-  pingTimeoutMs: z.number().optional().default(5000),
-  idleTimeoutMs: z.number().optional().default(300000),
-  reconnectTimeoutMs: z.number().optional().default(5000)
+  port: z.number().int().min(0).max(65535).default(3000),
+  logLevel: z.enum(["INFO", "WARN", "ERROR", "DEBUG", "TRACE"]).default("INFO"),
+  allowStdio: z.boolean().default(false),
+  pingIntervalMs: z.number().int().positive().optional().default(30000),
+  pingTimeoutMs: z.number().int().positive().optional().default(5000),
+  idleTimeoutMs: z.number().int().positive().optional().default(300000),
+  reconnectTimeoutMs: z.number().int().positive().optional().default(5000),
+  regexCacheSize: z.number().int().positive().optional().default(10000),
+  authCacheSize: z.number().int().positive().optional().default(10000),
+  authCacheTtlMs: z.number().int().positive().optional().default(60000),
+  authCacheGcIntervalMs: z.number().int().positive().optional().default(300000),
+  maxConcurrentSessions: z.number().int().positive().optional().default(10000),
+  maxTenantServers: z.number().int().nonnegative().optional().default(10)
 });
 
 export const PluginConfigSchema = z.object({
@@ -72,14 +86,6 @@ export const PluginConfigSchema = z.object({
 
 export const ProxyConfigSchema = z.object({
   masterKey: z.string().optional(),
-  system: SystemConfigSchema.optional().default({ 
-    port: 3000, 
-    logLevel: "INFO",
-    pingIntervalMs: 30000,
-    pingTimeoutMs: 5000,
-    idleTimeoutMs: 300000,
-    reconnectTimeoutMs: 5000
-  }),
   plugins: z.array(PluginConfigSchema).optional().default([]),
   mcpServers: z.record(z.string(), McpServerConfigSchema).optional().default({}),
   aiKeys: z.record(z.string(), AuthKeySchema).optional().default({})

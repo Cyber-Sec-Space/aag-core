@@ -5,6 +5,8 @@ export * from "./interfaces/IStateStore.js";
 export * from "./interfaces/MemoryStateStore.js";
 export * from "./interfaces/IRateLimitStore.js";
 export * from "./interfaces/MemoryRateLimitStore.js";
+export * from "./interfaces/IAuthStore.js";
+export * from "./auth/ConfigAuthStore.js";
 export * from "./config/types.js";
 export * from "./clientManager.js";
 export * from "./proxy.js";

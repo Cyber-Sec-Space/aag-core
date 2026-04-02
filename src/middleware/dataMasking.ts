@@ -1,29 +1,72 @@
 import { ProxyMiddleware, ProxyContext } from "./types.js";
 import { IPlugin, PluginContext } from "../interfaces/IPlugin.js";
+import { IConfigStore } from "../interfaces/IConfigStore.js";
 
 /**
  * A built-in reference middleware for masking sensitive data leaving the proxy.
  * Can be configured with regular expressions to strip out PII, secrets, or specific terms.
  */
 export class DataMaskingMiddleware implements ProxyMiddleware {
-    private redactionRules: RegExp[];
+    private globalRules: RegExp[];
     private maskString: string;
+    private configStore?: IConfigStore;
+    private static pluginRegexCache = new Map<string, RegExp>();
 
-    constructor(rules: (RegExp | string)[], maskString = "***") {
-        this.redactionRules = rules.map(r => typeof r === "string" ? new RegExp(r, "gi") : r);
+    constructor(rules: (RegExp | string)[], maskString = "***", configStore?: IConfigStore) {
+        this.globalRules = rules.map(r => typeof r === "string" ? new RegExp(r, "gi") : r);
         this.maskString = maskString;
+        this.configStore = configStore;
     }
 
     onResponse(context: ProxyContext, result: any) {
         if (!result || !result.content || !Array.isArray(result.content)) {
-            return result; // Pass through unmodified if structure is unexpected
+            return result; 
         }
+
+        let activeRules = this.globalRules;
+        let activeMask = this.maskString;
+
+        const pluginCfg = context.auth?.pluginConfig?.["aag-core-data-masking"];
+        if (pluginCfg) {
+            if (Array.isArray(pluginCfg.rules)) {
+                const maxSize = this.configStore?.getConfig()?.system?.regexCacheSize ?? 10000;
+                
+                activeRules = pluginCfg.rules.map((r: string | RegExp) => {
+                    if (typeof r !== "string") return r;
+                    let regex = DataMaskingMiddleware.pluginRegexCache.get(r);
+                    if (!regex) {
+                        regex = new RegExp(r, "gi");
+                        DataMaskingMiddleware.pluginRegexCache.set(r, regex);
+                        
+                        if (DataMaskingMiddleware.pluginRegexCache.size > maxSize) {
+                            const clearCount = Math.max(1, Math.floor(maxSize * 0.10));
+                            const iter = DataMaskingMiddleware.pluginRegexCache.keys();
+                            for(let i = 0; i < clearCount; i++) {
+                                const key = iter.next().value;
+                                /* istanbul ignore next - Generator boundary protection */
+                                if (key !== undefined) DataMaskingMiddleware.pluginRegexCache.delete(key);
+                            }
+                        }
+                    } else {
+                        // LRU behavior
+                        DataMaskingMiddleware.pluginRegexCache.delete(r);
+                        DataMaskingMiddleware.pluginRegexCache.set(r, regex);
+                    }
+                    return regex;
+                });
+            }
+            if (typeof pluginCfg.maskString === "string") {
+                activeMask = pluginCfg.maskString;
+            }
+        }
+
+        if (activeRules.length === 0) return result;
 
         const maskedContent = result.content.map((block: any) => {
             if (block.type === "text" && typeof block.text === "string") {
                 let text = block.text;
-                for (const rule of this.redactionRules) {
-                    text = text.replace(rule, this.maskString);
+                for (const rule of activeRules) {
+                    text = text.replace(rule, activeMask);
                 }
                 return { ...block, text };
             }
@@ -39,8 +82,8 @@ export const DataMaskingPlugin: IPlugin = {
     version: "1.0.0",
     register: (context: PluginContext) => {
         const { rules = [], maskString = "***" } = context.options || {};
-        if (rules.length > 0) {
-            const middleware = new DataMaskingMiddleware(rules, maskString);
+        if (rules.length > 0 || context.configStore) {
+            const middleware = new DataMaskingMiddleware(rules, maskString, context.configStore);
             context.proxyServer.use(middleware);
             context.logger.info("DataMaskingPlugin", "Built-in Data Masking plugin registered.");
         } else {

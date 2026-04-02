@@ -33,6 +33,133 @@ describe("DataMaskingMiddleware Suite", () => {
         expect(processed.content[2].text).toBe("Your access key is [REDACTED]. Be careful.");
         expect(processed.content[3]).toEqual({ type: "text" });
     });
+
+    it("should dynamically apply tenant-specific overrides from ProxyContext.auth", async () => {
+        const masker = new DataMaskingMiddleware([/global_secret/gi], "***");
+        
+        // Tenant A: Should use tenant rules and tenant mask
+        const ctxA: any = { 
+            aiId: "tenant-A", serverId: "test", toolName: "test",
+            auth: { pluginConfig: { "aag-core-data-masking": { rules: ["TOP_SECRET"], maskString: "[XXX]" } } }
+        };
+        const resultA = { content: [{ type: "text", text: "Global: global_secret. Tenant: TOP_SECRET" }] };
+        const processedA = await masker.onResponse(ctxA, resultA) as any;
+        expect(processedA.content[0].text).toBe("Global: global_secret. Tenant: [XXX]");
+        
+        // Call it a second time to hit the static pluginRegexCache
+        const processedA2 = await masker.onResponse(ctxA, resultA) as any;
+        expect(processedA2.content[0].text).toBe("Global: global_secret. Tenant: [XXX]");
+        
+        // Tenant B: Should use global rules and tenant mask
+        const ctxB: any = { 
+            aiId: "tenant-B", serverId: "test", toolName: "test",
+            auth: { pluginConfig: { "aag-core-data-masking": { maskString: "[YYY]" } } }
+        };
+        const resultB = { content: [{ type: "text", text: "Global: global_secret. Tenant: TOP_SECRET" }] };
+        const processedB = await masker.onResponse(ctxB, resultB) as any;
+        expect(processedB.content[0].text).toBe("Global: [YYY]. Tenant: TOP_SECRET");
+    });
+
+    it("should evict LRU cache when DataMaskingMiddleware regex config size exceeds system.regexCacheSize", async () => {
+        // Needs MockConfigStore import or dummy obj
+        const configStore: any = { getConfig: () => ({ system: { regexCacheSize: 1 } }) };
+        const masker = new DataMaskingMiddleware([], "***", configStore);
+        const ctx: any = { 
+            aiId: "tenant-Evict", serverId: "test", toolName: "test",
+            auth: { pluginConfig: { "aag-core-data-masking": { rules: ["rule1"] } } }
+        };
+        await masker.onResponse(ctx, { content: [{ type: "text", text: "hit rule1" }] });
+        
+        ctx.auth.pluginConfig["aag-core-data-masking"].rules = ["rule2"];
+        await masker.onResponse(ctx, { content: [{ type: "text", text: "hit rule2" }] });
+        
+        expect((DataMaskingMiddleware as any).pluginRegexCache.size).toBe(1);
+    });
+
+    it("should return output unchanged if activeRules is empty", async () => {
+        const masker = new DataMaskingMiddleware([]);
+        const ctx: any = { 
+            aiId: "tenant-Empty", serverId: "test", toolName: "test",
+            auth: { pluginConfig: { "aag-core-data-masking": { rules: [] } } }
+        };
+        const result = { content: [{ type: "text", text: "hello" }] };
+        const processed = await masker.onResponse(ctx, result) as any;
+        expect(processed).toEqual(result);
+    });
+
+    it("should handle undefined configs and fallback securely without crashing", async () => {
+        // Test 1: auth returns completely undefined config
+        const masker1 = new DataMaskingMiddleware([/secret/gi], "***");
+        const ctx1: any = { aiId: "tenant-X", serverId: "test", toolName: "test", auth: undefined };
+        const result1 = { content: [{ type: "text", text: "This is a secret" }] };
+        const processed1 = await masker1.onResponse(ctx1, result1) as any;
+        expect(processed1.content[0].text).toBe("This is a ***");
+
+        // Test 2: pluginCfg exists but rules/maskString are invalid types (not array / not string)
+        const ctx2: any = { 
+            aiId: "tenant-Y", serverId: "test", toolName: "test",
+            auth: { pluginConfig: { "aag-core-data-masking": { rules: "not-an-array", maskString: 12345 } } }
+        };
+        const masker2 = new DataMaskingMiddleware([/secret/gi], "***");
+        const processed2 = await masker2.onResponse(ctx2, result1) as any;
+        expect(processed2.content[0].text).toBe("This is a ***"); // Fallbacks to global
+    });
+
+    it("should handle invalid config gently", () => {
+        const mw = new DataMaskingMiddleware(["secret"]);
+        const ctx = {
+            auth: {
+                aiId: "aiid_2",
+                key: "key2",
+                pluginConfig: {
+                    "aag-core-data-masking": { rules: {} } // rules must be array
+                }
+            }
+        } as any;
+        
+        const res = mw.onResponse(ctx, {content: [{type: "text", text: "this is a secret"}]});
+        expect(res.content[0].text).toBe("this is a ***"); // Uses global only
+    });
+
+    it("should evict pluginRegexCache using LRU when capacity is reached", () => {
+        const mockConfig = {
+            getConfig: () => ({ system: { regexCacheSize: 2 } })
+        } as unknown as any;
+
+        const mw = new DataMaskingMiddleware([], "***", mockConfig);
+        (DataMaskingMiddleware as any)["pluginRegexCache"].clear();
+
+        const mockResponse = { content: [{ type: "text", text: "hello" }] };
+
+        // Fill cache
+        mw.onResponse({ auth: { pluginConfig: { "aag-core-data-masking": { rules: ["RuleA"] } } } } as any, mockResponse);
+        mw.onResponse({ auth: { pluginConfig: { "aag-core-data-masking": { rules: ["RuleB"] } } } } as any, mockResponse);
+        expect((DataMaskingMiddleware as any)["pluginRegexCache"].size).toBe(2);
+
+        // LRU bump RuleA
+        mw.onResponse({ auth: { pluginConfig: { "aag-core-data-masking": { rules: ["RuleA"] } } } } as any, mockResponse);
+        
+        // Overflow to 3, RuleB should be deleted since RuleA was recently used
+        mw.onResponse({ auth: { pluginConfig: { "aag-core-data-masking": { rules: ["RuleC"] } } } } as any, mockResponse);
+
+        expect((DataMaskingMiddleware as any)["pluginRegexCache"].size).toBe(2);
+        expect((DataMaskingMiddleware as any)["pluginRegexCache"].has("RuleB")).toBe(false);
+        expect((DataMaskingMiddleware as any)["pluginRegexCache"].has("RuleA")).toBe(true);
+        expect((DataMaskingMiddleware as any)["pluginRegexCache"].has("RuleC")).toBe(true);
+        (DataMaskingMiddleware as any)["pluginRegexCache"].clear();
+    });
+
+    it("should process tenant rules containing explicit RegExp instances natively", async () => {
+        const masker = new DataMaskingMiddleware([], "***");
+        const ctx: any = {
+            aiId: "tenant-R", serverId: "test", toolName: "test",
+            auth: { pluginConfig: { "aag-core-data-masking": { rules: ["string_secret", /regex_secret/gi] } } }
+        };
+        const result = { content: [{ type: "text", text: "I have a string_secret and a ReGeX_SeCrEt." }] };
+        const processed = await masker.onResponse(ctx, result) as any;
+        
+        expect(processed.content[0].text).toBe("I have a *** and a ***.");
+    });
 });
 
 import { DataMaskingPlugin } from "../src/middleware/dataMasking.js";
@@ -53,13 +180,13 @@ describe("DataMaskingPlugin Suite", () => {
         expect(mockLogger.info).toHaveBeenCalledWith("DataMaskingPlugin", "Built-in Data Masking plugin registered.");
     });
 
-    it("should skip registering when rules are empty", () => {
+    it("should skip registering when rules are empty and no configStore is provided", () => {
         const mockProxy: any = { use: jest.fn() };
         const mockLogger: any = { debug: jest.fn() };
 
         DataMaskingPlugin.register({
             proxyServer: mockProxy,
-            configStore: {} as any,
+            configStore: undefined as any,
             logger: mockLogger,
             options: { rules: [] }
         });
@@ -68,17 +195,31 @@ describe("DataMaskingPlugin Suite", () => {
         expect(mockLogger.debug).toHaveBeenCalledWith("DataMaskingPlugin", "DataMaskingPlugin loaded but no rules provided. Middleware will not be active.");
     });
 
-    it("should use default mask string and handle undefined options natively", () => {
+    it("should use default mask string and handle undefined options natively without configStore", () => {
         const mockProxy: any = { use: jest.fn() };
         const mockLogger: any = { debug: jest.fn() };
 
         DataMaskingPlugin.register({
             proxyServer: mockProxy,
-            configStore: {} as any,
+            configStore: undefined as any,
             logger: mockLogger,
             options: undefined
         } as any);
 
         expect(mockLogger.debug).toHaveBeenCalledWith("DataMaskingPlugin", "DataMaskingPlugin loaded but no rules provided. Middleware will not be active.");
+    });
+    it("should register middleware when rules are empty but configStore is provided for tenant overrides", () => {
+        const mockProxy: any = { use: jest.fn() };
+        const mockLogger: any = { info: jest.fn() };
+
+        DataMaskingPlugin.register({
+            proxyServer: mockProxy,
+            configStore: {} as any,
+            logger: mockLogger,
+            options: { rules: [] }
+        });
+
+        expect(mockProxy.use).toHaveBeenCalled();
+        expect(mockLogger.info).toHaveBeenCalledWith("DataMaskingPlugin", "Built-in Data Masking plugin registered.");
     });
 });

@@ -1,6 +1,7 @@
 import { ProxyMiddleware, ProxyContext } from "./types.js";
 import { IConfigStore } from "../interfaces/IConfigStore.js";
 import { IRateLimitStore } from "../interfaces/IRateLimitStore.js";
+import { RateLimitExceededError } from "../errors.js";
 import { MemoryRateLimitStore } from "../interfaces/MemoryRateLimitStore.js";
 import { IPlugin, PluginContext } from "../interfaces/IPlugin.js";
 
@@ -31,17 +32,17 @@ export class RateLimitMiddleware implements ProxyMiddleware {
     let currentMax = this.maxTokens;
     let currentWindowMs = this.windowMs;
 
-    // Recalculate rate if config exists (for dynamic updates)
-    if (this.configStore) {
-      const config = this.configStore.getConfig();
-      const aiConfig = config?.aiKeys?.[context.aiId];
-      if (aiConfig?.rateLimit?.rpm) {
-        currentMax = aiConfig.rateLimit.rpm;
-        currentWindowMs = 60000;
-      } else if (aiConfig?.rateLimit?.rph) {
-        currentMax = aiConfig.rateLimit.rph;
-        currentWindowMs = 3600000;
-      }
+    // Recalculate rate if config exists explicitly for this identity
+    const pluginCfg = context.auth?.pluginConfig?.["aag-core-rate-limit"];
+    if (pluginCfg) {
+      if (pluginCfg.maxRequests !== undefined) currentMax = pluginCfg.maxRequests;
+      if (pluginCfg.windowMs !== undefined) currentWindowMs = pluginCfg.windowMs;
+    } else if (context.auth?.rateLimit?.rpm !== undefined) {
+      currentMax = context.auth.rateLimit.rpm;
+      currentWindowMs = 60000;
+    } else if (context.auth?.rateLimit?.rph !== undefined) {
+      currentMax = context.auth.rateLimit.rph;
+      currentWindowMs = 3600000;
     }
 
     const permitted = await this.rateLimitStore.consume(context.aiId, currentMax, currentWindowMs);
@@ -49,7 +50,7 @@ export class RateLimitMiddleware implements ProxyMiddleware {
     if (permitted) {
       return args;
     } else {
-      throw new Error(`Rate limit exceeded for AI ID '${context.aiId}'. Please try again later.`);
+      throw new RateLimitExceededError(`Rate limit exceeded for AI ID '${context.aiId}'. Please try again later.`);
     }
   }
 }

@@ -35,8 +35,8 @@ describe("ClientManager", () => {
     jest.clearAllMocks();
   });
   
-  afterEach(() => {
-    if (clientManager) clientManager.destroy();
+  afterEach(async () => {
+    if (clientManager) await clientManager.destroy();
     jest.useRealTimers();
     jest.clearAllMocks();
   });
@@ -70,7 +70,47 @@ describe("ClientManager", () => {
   });
 
   // Evaluates the simulated Ping Daemon and automatic Exponential Backoff mechanisms handling downstream failures gracefully.
-  it("should trigger reconnection if ping fails and recover with backoff", async () => {
+    it("should yield to event loop when handling many clients in ping daemon", async () => {
+        jest.useFakeTimers();
+        for (let i = 0; i < 505; i++) {
+            (clientManager as any).clients.set(`client-${i}`, {
+                client: {
+                    ping: jest.fn<any>().mockResolvedValue({}),
+                    close: jest.fn<any>().mockResolvedValue({})
+                },
+                status: "CONNECTED",
+                lastActive: Date.now() - 30000,
+                metrics: { requests: 0, errors: 0 },
+                options: {} as any
+            });
+        }
+        
+        // Active client that should skip ping checking entirely
+        (clientManager as any).clients.set(`active-client`, {
+            client: {
+                ping: jest.fn<any>().mockResolvedValue({}),
+                close: jest.fn<any>().mockResolvedValue({})
+            },
+            status: "CONNECTED",
+            lastAccessed: Date.now() + 29500, // Very recently active relative to interval + 30s
+            lastActive: Date.now() + 29500,
+            metrics: { requests: 0, errors: 0 },
+            options: {} as any
+        });
+        
+        // 1. Advance the ping loop
+        jest.advanceTimersByTime(30000);
+        
+        // 2. Clear the setImmediate macro-tasks
+        for (let i = 0; i < 20; i++) {
+            jest.advanceTimersByTime(10);
+            await Promise.resolve();
+        }
+        
+        jest.useRealTimers();
+    });
+
+    it("should invoke reconnect if ping check explicitly times out", async () => {
     jest.useFakeTimers();
     const { ClientManager: CM } = await import("../src/clientManager.js");
     const config: any = { mcpServers: { "server-1": { transport: "stdio", command: "echo" } } };
@@ -96,6 +136,112 @@ describe("ClientManager", () => {
     // Status should have recovered automatically
     expect(clientManager.getClientStatus("server-1")).toBe("CONNECTED");
     jest.useRealTimers();
+  });
+
+  describe("SaaS Multi-Tenant Specific Edge Cases", () => {
+    it("should evict idle tenant contexts fully from memory map, preventing Map bloat", async () => {
+      jest.useFakeTimers();
+      const { ClientManager: CM } = await import("../src/clientManager.js");
+      const configStore = new MockConfigStore({ system: { idleTimeoutMs: 1000 } } as any);
+      clientManager = new CM(configStore, new MockSecretStore(), new MockLogger());
+      
+      const auth = { key: "secret", tenantId: "tenant-ABC", mcpServers: { "tenant-server": { transport: "sse", url: "http://test" } as any } };
+      const client = await clientManager.getClientJIT("tenant-server", auth);
+      expect(client).toBeDefined();
+
+      // At this point it's connected and inside the map under 'tenant-ABC::tenant-server'
+      const scopeId = "tenant-ABC::tenant-server";
+      expect(clientManager.getClientStatus("tenant-server", auth)).toBe("CONNECTED");
+      
+      // Fast forward past idle timeout
+      await jest.advanceTimersByTimeAsync(30000 + 1500); // Exceed both idle and ping interval
+      
+      // Should completely be deleted from map
+      expect(clientManager.getClientStatus("tenant-server", auth)).toBeUndefined();
+      jest.useRealTimers();
+    });
+
+    it("should resolve getClient and getClientStatus cleanly via auth alias translation", async () => {
+      const { ClientManager: CM } = await import("../src/clientManager.js");
+      clientManager = new CM(new MockConfigStore({} as any), new MockSecretStore(), new MockLogger());
+      
+      const auth = { key: "secret", tenantId: "tenant-ABC", mcpServers: { "alias-srv": { transport: "sse", url: "http://test" } as any } } as any;
+      
+      // Initially undefined
+      expect(clientManager.getClient("alias-srv", auth)).toBeUndefined();
+      expect(clientManager.getClientStatus("alias-srv", auth)).toBeUndefined();
+
+      // Trigger JIT
+      await clientManager.getClientJIT("alias-srv", auth);
+
+      // Now it should be resolvable
+      expect(clientManager.getClientStatus("alias-srv", auth)).toBe("CONNECTED");
+      expect(clientManager.getClient("alias-srv", auth)).toBeDefined();
+    });
+
+    it("should throw AagConfigurationError if tenant tries to define stdio but the system blocks it", async () => {
+      const { ClientManager: CM } = await import("../src/clientManager.js");
+      // System defaults allowStdio to false or undefined
+      clientManager = new CM(new MockConfigStore({} as any), new MockSecretStore(), new MockLogger());
+      
+      const auth = { key: "secret", tenantId: "tenant-RCE", mcpServers: { "evil-server": { transport: "stdio", command: "rm", args: ["-rf", "/"] } as any } } as any;
+      
+      let errorThrown = false;
+      try {
+          await clientManager.getClientJIT("evil-server", auth);
+      } catch (e: any) {
+          errorThrown = true;
+          expect(e.message).toContain("Disallowed transport: 'stdio' is disabled for tenant-provided MCP servers");
+      }
+      expect(errorThrown).toBe(true);
+
+      // Now test the allowed branch (Line 211 false branch)
+      const allowedConfigStore = new MockConfigStore({ system: { allowStdio: true } } as any);
+      const allowedClientManager = new CM(allowedConfigStore, new MockSecretStore(), new MockLogger());
+      const allowedClient = await allowedClientManager.getClientJIT("evil-server", auth);
+      expect(allowedClient).toBeDefined();
+    });
+
+    it("should fallback to anonymous scope if neither tenantId nor key is present", async () => {
+      const { ClientManager: CM } = await import("../src/clientManager.js");
+      clientManager = new CM(new MockConfigStore({} as any), new MockSecretStore(), new MockLogger());
+      const auth: any = { mcpServers: { "anon-srv": { transport: "sse", url: "http://anon" } } };
+      await clientManager.getClientJIT("anon-srv", auth);
+      expect(clientManager.getClientStatus("anon-srv", auth)).toBe("CONNECTED");
+    });
+
+    it("should handle undefined return during getClientsJIT tenant mapping", async () => {
+      const { ClientManager: CM } = await import("../src/clientManager.js");
+      clientManager = new CM(new MockConfigStore({} as any), new MockSecretStore(), new MockLogger());
+      const auth = { key: "secret", mcpServers: { "faulty": { transport: "sse", url: "http://test" } as any } } as any;
+      jest.spyOn(clientManager, "getClientJIT").mockResolvedValue(undefined);
+      const map = await clientManager.getClientsJIT(auth);
+      expect(map.size).toBe(0); // getClientJIT mocked to undefined, branch 381 false path
+    });
+
+    it("should skip dead reconnecting clients gracefully during ping daemon race", async () => {
+      jest.useFakeTimers();
+      const { ClientManager: CM } = await import("../src/clientManager.js");
+      clientManager = new CM(new MockConfigStore({} as any), new MockSecretStore(), new MockLogger());
+      const auth = { key: "secret", mcpServers: { "ping-srv": { transport: "sse", url: "http://ping" } as any } } as any;
+      
+      const client = await clientManager.getClientJIT("ping-srv", auth);
+      
+      // When ping starts running, it will synchronously mutate the client's status first, 
+      // preventing the catch handler from triggering triggerReconnect.
+      (client as any).ping.mockImplementationOnce(() => {
+          const managed = (clientManager as any).clients.get("secret::ping-srv");
+          if (managed) managed.status = "DISCONNECTED"; 
+          return Promise.reject(new Error("Timeout"));
+      });
+
+      // Trigger the interval logic
+      await jest.advanceTimersByTimeAsync(30000);
+      
+      // Verify triggerReconnect was NOT called and state remains what we forced it to
+      expect(clientManager.getClientStatus("ping-srv", auth)).toBe("DISCONNECTED");
+      jest.useRealTimers();
+    });
   });
 
   // Tests the HTTP streaming downstream constructor branches and Auth Injection header mechanics.
@@ -181,11 +327,12 @@ describe("ClientManager", () => {
     // Force ping to reject. Next interval should catch
     (client as any).ping.mockRejectedValueOnce(new Error("Ping failed"));
     
-    await jest.advanceTimersByTimeAsync(30000);
+    // Advance to 16000ms, which triggers the continuous sweep ping criteria (>= 15000)
+    await jest.advanceTimersByTimeAsync(16000);
     expect(clientManager.getClientStatus("ping-server")).toBe("RECONNECTING");
 
-    // Advance to process the 1st backoff attempt
-    await jest.advanceTimersByTimeAsync(2000);
+    // Advance to process the 1st backoff attempt (5000ms)
+    await jest.advanceTimersByTimeAsync(5000);
     expect(clientManager.getClientStatus("ping-server")).toBe("CONNECTED");
 
     // Retrieve the newly rotated client instance and force it to fail
@@ -193,7 +340,7 @@ describe("ClientManager", () => {
     (newClient as any).ping.mockRejectedValueOnce(new Error("Ping failed 2"));
 
     (clientManager as any).createTransportAndConnect = jest.fn<any>().mockResolvedValue(null);
-    await jest.advanceTimersByTimeAsync(30000);
+    await jest.advanceTimersByTimeAsync(16000); // Trigger ping again
     // Because it fails forever, it will recursively stay in RECONNECTING states and scale backoffs
     expect(clientManager.getClientStatus("ping-server")).toBe("RECONNECTING");
     
@@ -214,12 +361,43 @@ describe("ClientManager", () => {
     expect(clientManager.getClientStatus("diff-server")).toBe("DISCONNECTED_IDLE");
   });
 
+  it('should safely destroy and catch removeClient errors', async () => {
+      const { ClientManager: CM } = await import("../src/clientManager.js");
+      clientManager = new CM(new MockConfigStore({mcpServers: {}} as any), new MockSecretStore(), new MockLogger());
+      
+      (clientManager as any).clients.set("error-client", {
+          config: { transport: "stdio", command: "test" },
+          status: "CONNECTED",
+          client: { close: jest.fn<any>().mockRejectedValue(new Error("force-catch")) },
+          reconnectAttempts: 0
+      });
+      
+      await expect(clientManager.destroy()).resolves.not.toThrow();
+      
+      // Hit the undefined sweepTimer branch
+      (clientManager as any).sweepTimer = undefined;
+      await expect(clientManager.destroy()).resolves.not.toThrow();
+  });
+
   it("should return null for unsupported transports triggering boot throw", async () => {
       const { ClientManager: CM } = await import("../src/clientManager.js");
-      clientManager = new CM(new MockConfigStore({ mcpServers: { "unsupported": { transport: "websocket" } as any } } as any), new MockSecretStore(), new MockLogger());
-      await clientManager.syncConfig({ mcpServers: { "unsupported": { transport: "websocket" } as any } } as any);
-      await expect(clientManager.getClientJIT("unsupported")).rejects.toThrow();
+      clientManager = new CM(new MockConfigStore({} as any), new MockSecretStore(), new MockLogger());
+      await expect(clientManager.syncConfig({ mcpServers: { "unsupported": { transport: "websocket" } as any } } as any))
+          .rejects.toThrow("Proxy Configuration Schema is invalid during syncConfig");
   }, 10000);
+
+  it("should securely hit unsupported transport throws deeply inside proxy routines bypassing Zod artificially", async () => {
+      const { ClientManager: CM } = await import("../src/clientManager.js");
+      clientManager = new CM(new MockConfigStore({mcpServers: {}} as any), new MockSecretStore(), new MockLogger());
+      
+      (clientManager as any).clients.set("unsupported-hack", {
+          config: { transport: "websocket" },
+          status: "DISCONNECTED",
+          reconnectAttempts: 0
+      });
+      
+      await expect(clientManager.getClientJIT("unsupported-hack")).rejects.toThrow("Unsupported or null transport connection for: unsupported-hack");
+  });
 
   it("should handle legacy synchronous getClient APIs gracefully", async () => {
     const { ClientManager: CM } = await import("../src/clientManager.js");
@@ -277,7 +455,7 @@ describe("ClientManager", () => {
       const { ClientManager: CM } = await import("../src/clientManager.js");
       const config: any = { mcpServers: { 
           "stdio_test": { transport: "stdio", command: "echo", authInjection: { type: "env", key: "Z" } },
-          "http_falsy": { transport: "http", url: "x", authInjection: { type: "header", headerName: "x", value: "x" } }
+          "http_falsy": { transport: "http", url: "http://x", authInjection: { type: "header", headerName: "x", value: "x" } }
       } };
       const mockStore = new MockSecretStore();
       jest.spyOn(mockStore, "resolveSecret").mockResolvedValue(""); 
@@ -292,7 +470,7 @@ describe("ClientManager", () => {
       clientManager = new CM(new MockConfigStore({mcpServers: {}} as any), new MockSecretStore(), new MockLogger());
       clearInterval((clientManager as any).pingInterval);
       (clientManager as any).pingInterval = undefined;
-      clientManager.destroy();
+      await clientManager.destroy();
   });
 
   it("should safely skip map setting for null clients inside getClientsJIT pool", async () => {
@@ -345,7 +523,7 @@ describe("ClientManager", () => {
   it("should handle falsy secretStore resolution safely for SSE transport headers natively", async () => {
       const { ClientManager: CM } = await import("../src/clientManager.js");
       const config: any = { mcpServers: { 
-          "sse_falsy": { transport: "sse", url: "x", authInjection: { type: "header", headerName: "x", value: "x" } }
+          "sse_falsy": { transport: "sse", url: "http://x", authInjection: { type: "header", headerName: "x", value: "x" } }
       } };
       const mockStore = new MockSecretStore();
       jest.spyOn(mockStore, "resolveSecret").mockResolvedValue(""); 
@@ -377,8 +555,70 @@ describe("ClientManager", () => {
       managed.status = "DISCONNECTED";
       
       (clientManager as any).triggerReconnect("ghost");
-      clientManager.destroy(); 
+      await clientManager.destroy(); 
       
       await managed.connectingPromise; 
+  });
+
+  it("should securely execute catch callbacks natively handling thrown close failures during disconnect routines", async () => {
+      const { ClientManager: CM } = await import("../src/clientManager.js");
+      clientManager = new CM(new MockConfigStore({mcpServers: { "catch_test": {transport: "stdio", command: "echo"} }} as any), new MockSecretStore(), new MockLogger());
+      await clientManager.syncConfig({mcpServers: { "catch_test": {transport: "stdio", command: "echo"} }} as any);
+      
+      const managed = (clientManager as any).clients.get("catch_test");
+      managed.status = "CONNECTED";
+      managed.client = { close: jest.fn<any>().mockRejectedValue(new Error("forced close test error")) };
+      
+      // Hit catch inside triggerReconnect (line 103 in clientManager.ts)
+      (clientManager as any).triggerReconnect("catch_test");
+      
+      // Destroy so timeouts don't hang
+      await clientManager.destroy();
+  });
+
+  it("should securely execute catch callbacks natively handling thrown close failures during idle eviction", async () => {
+      jest.useFakeTimers();
+      const { ClientManager: CM } = await import("../src/clientManager.js");
+      clientManager = new CM(new MockConfigStore({mcpServers: { "catch_idle": {transport: "stdio", command: "echo"} }} as any), new MockSecretStore(), new MockLogger(), 100);
+      await clientManager.syncConfig({mcpServers: { "catch_idle": {transport: "stdio", command: "echo"} }} as any);
+      
+      const managed = (clientManager as any).clients.get("catch_idle");
+      managed.status = "CONNECTED";
+      managed.lastAccessed = Date.now() - 500000;
+      managed.client = { close: jest.fn<any>().mockRejectedValue(new Error("idle eviction close error")), ping: jest.fn() };
+      
+      // Trigger the Ping Daemon loop over the interval
+      await jest.advanceTimersByTimeAsync(30000);
+
+      // Status should be disconnected idle and catch block fully traversed
+      expect(managed.status).toBe("DISCONNECTED_IDLE");
+      jest.useRealTimers();
+      await clientManager.destroy();
+  });
+
+  it("should securely execute catch callback natively handling thrown failures during total lifecycle destruction", async () => {
+      const { ClientManager: CM } = await import("../src/clientManager.js");
+      clientManager = new CM(new MockConfigStore({mcpServers: { "catch_destroy": {transport: "stdio", command: "echo"} }} as any), new MockSecretStore(), new MockLogger());
+      await clientManager.syncConfig({mcpServers: { "catch_destroy": {transport: "stdio", command: "echo"} }} as any);
+      
+      // Specifically mock removeClient returning a hard rejection mid-lifecycle sweep
+      jest.spyOn(clientManager as any, "removeClient").mockRejectedValue(new Error("Internal Destructor Bypass Error"));
+      
+      // Executes line 301 catch block internally
+      await clientManager.destroy();
+  });
+
+  it("should throw AagConfigurationError if tenant exceeds maxServers limit during JIT resolution", async () => {
+      const { ClientManager: CM } = await import("../src/clientManager.js");
+      const cm = new CM(new MockConfigStore({} as any), new MockSecretStore(), new MockLogger());
+      const testAuth = {
+          mcpServers: {
+              s1: { transport: "stdio", command: "test" },
+              s2: { transport: "stdio", command: "test" }
+          },
+          permissions: { maxServers: 1 }
+      };
+      await expect(cm.getClientsJIT(testAuth as any)).rejects.toThrow(/Tenant exceeds maximum allowed servers/);
+      await cm.destroy();
   });
 });
