@@ -574,4 +574,59 @@ describe("ProxyServer Suite", () => {
             p.destroy();
         });
     });
+
+    describe("Tenant authInjection SSRD protection", () => {
+      it("should safely inject empty string if tenant authInjection payload value is undefined", async () => {
+         const { ProxyServer } = await import("../src/proxy.js");
+         const { ClientManager } = await import("../src/clientManager.js");
+         const { ConfigAuthStore } = await import("../src/auth/ConfigAuthStore.js");
+         
+         const customConfig = new MockConfigStore({
+            system: { allowStdio: true },
+            aiKeys: {
+                "test_tenant": {
+                    key: "secret",
+                    mcpServers: {
+                        "tenant_db": { 
+                            transport: "stdio", 
+                            command: "node", 
+                            authInjection: { type: "payload", key: "tenantToken" } 
+                        }
+                    },
+                    permissions: { allowedTools: ["*"] }
+                }
+            }
+         } as any);
+         
+         const cm = new ClientManager(customConfig, new MockSecretStore(), new MockLogger());
+         jest.spyOn(cm, "getClientJIT").mockResolvedValue({
+             callTool: jest.fn().mockResolvedValue({ content: [] }),
+             close: jest.fn()
+         } as any);
+
+         const p = new ProxyServer(
+             cm, 
+             customConfig, 
+             new MockSecretStore(),
+             new ConfigAuthStore(customConfig), 
+             new MockLogger()
+         );
+         
+         const handlers = ((p as any).server as any)._requestHandlers;
+         
+         const callHandler = handlers.get("tools/call");
+
+         process.env.AI_ID = "test_tenant";
+         process.env.AI_KEY = "secret";
+         
+         await callHandler({ method: "tools/call", params: { name: "tenant_db___query", arguments: { query: "SELECT 1" } } }, {});
+         
+         const mockClient = await (cm.getClientJIT as jest.Mock).mock.results[0].value as any;
+         expect(mockClient.callTool).toHaveBeenCalledWith(expect.objectContaining({
+             arguments: expect.objectContaining({ tenantToken: "", query: "SELECT 1" })
+         }));
+
+         p.destroy();
+      });
+    });
 });

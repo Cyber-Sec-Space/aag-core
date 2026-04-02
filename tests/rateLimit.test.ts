@@ -171,4 +171,31 @@ describe("MemoryRateLimitStore Suite", () => {
 
         smallStore.destroy();
     });
+
+    it("should process pluginCfg with partial options", async () => {
+        const { RateLimitMiddleware } = await import("../src/middleware/rateLimit.js");
+        const mw = new RateLimitMiddleware(5, 20000, {} as any, new MemoryRateLimitStore());
+        
+        // Mock proxy context
+        const ctxPartial1 = {
+            auth: {
+                pluginConfig: { "aag-core-rate-limit": { maxRequests: 999 } }
+            }
+        } as any;
+        const ctxPartial2 = {
+            auth: {
+                pluginConfig: { "aag-core-rate-limit": { windowMs: 99999 } }
+            }
+        } as any;
+        const ctxPartialBoth = {
+            auth: {
+                pluginConfig: { "aag-core-rate-limit": { maxRequests: 888, windowMs: 88888 } }
+            }
+        } as any;
+
+        // Ensure lines execute without errors
+        await expect(mw.onRequest(ctxPartial1, {})).resolves.not.toThrow();
+        await expect(mw.onRequest(ctxPartial2, {})).resolves.not.toThrow();
+        await expect(mw.onRequest(ctxPartialBoth, {})).resolves.not.toThrow();
+    });
 });

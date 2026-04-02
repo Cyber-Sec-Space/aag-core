@@ -607,4 +607,18 @@ describe("ClientManager", () => {
       // Executes line 301 catch block internally
       await clientManager.destroy();
   });
+
+  it("should throw AagConfigurationError if tenant exceeds maxServers limit during JIT resolution", async () => {
+      const { ClientManager: CM } = await import("../src/clientManager.js");
+      const cm = new CM(new MockConfigStore({} as any), new MockSecretStore(), new MockLogger());
+      const testAuth = {
+          mcpServers: {
+              s1: { transport: "stdio", command: "test" },
+              s2: { transport: "stdio", command: "test" }
+          },
+          permissions: { maxServers: 1 }
+      };
+      await expect(cm.getClientsJIT(testAuth as any)).rejects.toThrow(/Tenant exceeds maximum allowed servers/);
+      await cm.destroy();
+  });
 });
